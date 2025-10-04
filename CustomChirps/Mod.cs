@@ -48,9 +48,6 @@ namespace CustomChirps
             harmony.PatchAll(typeof(Mod).Assembly);
 
 
-            // Install our UI patch MANUALLY (safe: won’t throw if not found)
-            UI.ChirperTextPatchInstaller.Install(harmony, log);
-
             var patchedMethods = harmony.GetPatchedMethods().ToArray();
             log.Info($"Plugin {harmonyID} made patches! Patched methods: " + patchedMethods.Length);
             foreach (var patchedMethod in patchedMethods)

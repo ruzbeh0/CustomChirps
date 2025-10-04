@@ -5,42 +5,47 @@ using Unity.Entities;
 
 namespace CustomChirps.Systems
 {
-    /// <summary>
-    /// Shared store so API, spawner, and UI patch can exchange keys.
-    /// - PendingByPrefab: next key for a chirp that will spawn from that prefab.
-    /// - AttachedByChirp: key already associated with a spawned chirp entity.
-    /// </summary>
+    public struct ChirpPayload
+    {
+        public FixedString512Bytes Key;          // runtime text key
+        public Entity Sender;                    // desired sender entity (account)
+        public Entity Target;                    // optional target (building/entity)
+        public FixedString128Bytes OverrideSenderName; // "Realistic Trips Mod" (optional)
+    }
+
     public static class RuntimeChirpTextBus
     {
-        // prefab -> next runtime key
-        public static readonly ConcurrentDictionary<Entity, FixedString512Bytes> PendingByPrefab
-            = new ConcurrentDictionary<Entity, FixedString512Bytes>();
+        // Prefab -> queue of payloads (so multiple posts from the same prefab won't collide)
+        private static readonly ConcurrentDictionary<Entity, ConcurrentQueue<ChirpPayload>> _byPrefab =
+            new();
 
-        // instance chirp entity -> key (optional helper cache)
-        public static readonly ConcurrentDictionary<Entity, FixedString512Bytes> AttachedByChirp
-            = new ConcurrentDictionary<Entity, FixedString512Bytes>();
+        // Instance -> payload attached (for UI self-heal and name override)
+        private static readonly ConcurrentDictionary<Entity, ChirpPayload> _attachedByInstance =
+            new();
 
-        public static void RegisterPending(Entity prefab, string key)
+        public static void EnqueuePending(Entity prefab, in ChirpPayload payload)
         {
-            if (prefab == Entity.Null || string.IsNullOrEmpty(key)) return;
-            PendingByPrefab[prefab] = (FixedString512Bytes)key;
+            if (prefab == Entity.Null) return;
+            var q = _byPrefab.GetOrAdd(prefab, _ => new ConcurrentQueue<ChirpPayload>());
+            q.Enqueue(payload);
         }
 
-        public static bool TryConsumePending(Entity prefab, out FixedString512Bytes key)
+        public static bool TryDequeueForPrefab(Entity prefab, out ChirpPayload payload)
         {
-            if (prefab == Entity.Null) { key = default; return false; }
-            return PendingByPrefab.TryRemove(prefab, out key);
+            payload = default;
+            if (prefab == Entity.Null) return false;
+            if (_byPrefab.TryGetValue(prefab, out var q))
+                return q.TryDequeue(out payload);
+            return false;
         }
 
-        public static void RememberAttached(Entity chirp, FixedString512Bytes key)
+        public static void RememberAttached(Entity instance, in ChirpPayload payload)
         {
-            if (chirp == Entity.Null) return;
-            AttachedByChirp[chirp] = key;
+            if (instance == Entity.Null) return;
+            _attachedByInstance[instance] = payload;
         }
 
-        public static bool TryGetAttached(Entity chirp, out FixedString512Bytes key)
-        {
-            return AttachedByChirp.TryGetValue(chirp, out key);
-        }
+        public static bool TryGetAttached(Entity instance, out ChirpPayload payload)
+            => _attachedByInstance.TryGetValue(instance, out payload);
     }
 }

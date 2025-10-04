@@ -1,4 +1,5 @@
 ﻿// UI/ChirperMessagePatch.cs
+using Colossal.Entities;
 using CustomChirps.Components;
 using CustomChirps.Systems;
 using Game.Prefabs;
@@ -19,50 +20,108 @@ namespace CustomChirps.UI
             var em = world.EntityManager;
             if (!em.Exists(chirp)) return true;
 
-            // 1) If already attached, return the key
+            // 1) If a queued payload exists for this chirp's prefab, consume and attach it now.
+            if (em.HasComponent<PrefabRef>(chirp))
+            {
+                var prefab = em.GetComponentData<PrefabRef>(chirp).m_Prefab;
+                if (prefab != Entity.Null &&
+                    RuntimeChirpTextBus.TryDequeueForPrefab(prefab, out var payload))
+                {
+                    // Tag with our key so UI resolves text from our runtime locale
+                    if (!em.HasComponent<ModChirpText>(chirp))
+                        em.AddComponentData(chirp, new ModChirpText { Key = payload.Key });
+                    else
+                        em.SetComponentData(chirp, new ModChirpText { Key = payload.Key });
+
+                    // Enforce sender on the instance
+                    if (payload.Sender != Entity.Null && em.HasComponent<Game.Triggers.Chirp>(chirp))
+                    {
+                        var c = em.GetComponentData<Game.Triggers.Chirp>(chirp);
+                        if (c.m_Sender != payload.Sender)
+                        {
+                            c.m_Sender = payload.Sender;
+                            em.SetComponentData(chirp, c);
+                        }
+                    }
+
+                    // Ensure TARGET exists in the ChirpEntity buffer (no m_Target on Chirp!)
+                    if (payload.Target != Entity.Null)
+                    {
+                        DynamicBuffer<Game.Triggers.ChirpEntity> links;
+                        if (!em.TryGetBuffer<Game.Triggers.ChirpEntity>(chirp, false, out links))
+                            links = em.AddBuffer<Game.Triggers.ChirpEntity>(chirp);
+
+                        bool alreadyLinked = false;
+                        for (int i = 0; i < links.Length; i++)
+                            if (links[i].m_Entity == payload.Target) { alreadyLinked = true; break; }
+
+                        if (!alreadyLinked)
+                            links.Add(new Game.Triggers.ChirpEntity(payload.Target));
+                    }
+
+                    // Remember full payload (for UI sender-name override)
+                    RuntimeChirpTextBus.RememberAttached(chirp, payload);
+
+                    __result = payload.Key.ToString();
+                    return false; // skip vanilla
+                }
+            }
+
+            // 2) If we've already tagged this chirp earlier, just return the key we set.
             if (em.HasComponent<ModChirpText>(chirp))
             {
                 var key = em.GetComponentData<ModChirpText>(chirp).Key.ToString();
                 if (!string.IsNullOrEmpty(key))
                 {
                     __result = key;
-                    return false;
+                    return false; // skip vanilla
                 }
             }
 
-            // 2) If spawner didn’t run yet, try to attach right here (self-heal)
-            //    - lookup prefab of this chirp
-            if (em.HasComponent<PrefabRef>(chirp))
-            {
-                var prefab = em.GetComponentData<PrefabRef>(chirp).m_Prefab;
-                if (RuntimeChirpTextBus.TryConsumePending(prefab, out var keyFS))
-                {
-                    // Attach marker now so subsequent calls also see it
-                    em.AddComponentData(chirp, new ModChirpText { Key = keyFS });
-                    RuntimeChirpTextBus.RememberAttached(chirp, keyFS);
+            // 3) Fall through; our Postfix will still try to enforce sender/target.
+            return true;
+        }
 
-                    var key = keyFS.ToString();
-                    if (!string.IsNullOrEmpty(key))
+        public static void Postfix(ref string __result, Entity chirp)
+        {
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world == null || chirp == Entity.Null) return;
+
+            var em = world.EntityManager;
+            if (!em.Exists(chirp)) return;
+
+            if (RuntimeChirpTextBus.TryGetAttached(chirp, out var payload))
+            {
+                // Enforce sender
+                if (payload.Sender != Entity.Null && em.HasComponent<Game.Triggers.Chirp>(chirp))
+                {
+                    var c = em.GetComponentData<Game.Triggers.Chirp>(chirp);
+                    if (c.m_Sender != payload.Sender)
                     {
-                        __result = key;
-                        return false;
+                        c.m_Sender = payload.Sender;
+                        em.SetComponentData(chirp, c);
                     }
                 }
-            }
 
-            // 3) As a last resort, see if the bus already cached a key for this exact entity
-            if (RuntimeChirpTextBus.TryGetAttached(chirp, out var cachedFS))
-            {
-                var key = cachedFS.ToString();
-                if (!string.IsNullOrEmpty(key))
+                // Ensure TARGET in ChirpEntity buffer
+                if (payload.Target != Entity.Null)
                 {
-                    __result = key;
-                    return false;
-                }
-            }
+                    DynamicBuffer<Game.Triggers.ChirpEntity> links;
+                    if (!em.TryGetBuffer<Game.Triggers.ChirpEntity>(chirp, false, out links))
+                        links = em.AddBuffer<Game.Triggers.ChirpEntity>(chirp);
 
-            // No custom text → vanilla
-            return true;
+                    bool alreadyLinked = false;
+                    for (int i = 0; i < links.Length; i++)
+                        if (links[i].m_Entity == payload.Target) { alreadyLinked = true; break; }
+
+                    if (!alreadyLinked)
+                        links.Add(new Game.Triggers.ChirpEntity(payload.Target));
+                }
+
+                var key = payload.Key.ToString();
+                if (!string.IsNullOrEmpty(key))
+                    __result = key;
+            }
         }
     }
 }

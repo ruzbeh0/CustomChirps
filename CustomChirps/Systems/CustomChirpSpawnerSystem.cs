@@ -1,17 +1,23 @@
 ﻿// Systems/CustomChirpSpawnerSystem.cs
-using CustomChirps.Components;
-using CustomChirps.Systems;            // ModChirpText, RuntimeChirpTextBus
-using Game.Prefabs;                    // PrefabRef
-using Game.Triggers;                   // Chirp
+using CustomChirps.Components;   // ModChirpText
+using CustomChirps.Systems;      // RuntimeChirpTextBus
+using Game.Prefabs;              // PrefabRef
+using Game.Triggers;             // Chirp, ChirpEntity
 using Unity.Collections;
 using Unity.Entities;
 
 namespace CustomChirps.Systems
 {
     /// <summary>
-    /// Moves the pending runtime key (from RuntimeChirpTextBus) onto the
-    /// actual spawned chirp *instance* entity (as ModChirpText).
-    /// Uses plain for-loops (no Entities.ForEach).
+    /// Moves queued runtime payloads (text key, sender, target) from RuntimeChirpTextBus
+    /// onto newly spawned chirp *instances*.
+    ///
+    /// Key bits:
+    ///   • Adds ModChirpText { Key = runtimeKey } so the UI resolves text from your runtime locale
+    ///   • Sets Chirp.m_Sender to the desired account entity
+    ///   • Ensures the *target* is stored in the ChirpEntity buffer (this is what makes the link clickable)
+    ///
+    /// Uses plain for-loops (no Entities.ForEach/Burst) to match your earlier request.
     /// </summary>
     public partial class CustomChirpSpawnerSystem : SystemBase
     {
@@ -21,7 +27,8 @@ namespace CustomChirps.Systems
         {
             base.OnCreate();
 
-            // Query: chirp instances that have PrefabRef and don't yet have our marker.
+            // New chirps (instances) have Chirp + PrefabRef; we only process those
+            // that don't yet have our ModChirpText tag.
             _newChirpsQuery = new EntityQueryBuilder(Allocator.Temp)
                 .WithAll<Game.Prefabs.Chirp, PrefabRef>()
                 .WithNone<ModChirpText>()
@@ -30,23 +37,14 @@ namespace CustomChirps.Systems
 
         protected override void OnUpdate()
         {
-            // Nothing pending? Nothing to do.
-            if (RuntimeChirpTextBus.PendingByPrefab.Count == 0)
-                return;
-
             var em = EntityManager;
 
-            // Get matching entities & their PrefabRef in parallel arrays
             using var entities = _newChirpsQuery.ToEntityArray(Allocator.Temp);
             using var prefabRefs = _newChirpsQuery.ToComponentDataArray<PrefabRef>(Allocator.Temp);
+            if (entities.Length == 0) return;
 
-            if (entities.Length == 0)
-                return;
-
-            // We’ll batch mutations via ECB then playback
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
-            // Plain for-loop iteration
             for (int i = 0; i < entities.Length; i++)
             {
                 var e = entities[i];
@@ -54,15 +52,58 @@ namespace CustomChirps.Systems
                 if (prefab == Entity.Null)
                     continue;
 
-                // Consume the next pending key for this prefab (one key -> one chirp)
-                if (RuntimeChirpTextBus.TryConsumePending(prefab, out var keyFS))
+                // 1) Pull the next payload queued for THIS prefab.
+                if (!RuntimeChirpTextBus.TryDequeueForPrefab(prefab, out var payload))
+                    continue;
+
+                // 2) Add the runtime text key to the instance so UI uses your text.
+                ecb.AddComponent(e, new ModChirpText { Key = payload.Key });
+
+                // 3) Set the sender (account entity) on the instance.
+                if (payload.Sender != Entity.Null && em.HasComponent<Game.Prefabs.Chirp>(e))
                 {
-                    ecb.AddComponent(e, new ModChirpText { Key = keyFS });
-                    RuntimeChirpTextBus.RememberAttached(e, keyFS);
+                    var c = em.GetComponentData<Game.Triggers.Chirp>(e);
+                    if (c.m_Sender != payload.Sender)
+                    {
+                        c.m_Sender = payload.Sender;
+                        ecb.SetComponent(e, c);
+                    }
                 }
+
+                // 4) Ensure the clickable TARGET is present in the ChirpEntity buffer.
+                //    (Chirp has NO 'm_Target' field — targets are stored as buffer entries.)
+                if (payload.Target != Entity.Null)
+                {
+                    bool alreadyLinked = false;
+
+                    // Check any existing links *now* (before playback), to avoid duplicates.
+                    if (em.HasBuffer<ChirpEntity>(e))
+                    {
+                        var current = em.GetBuffer<ChirpEntity>(e, true); // readonly view is fine for checking
+                        for (int k = 0; k < current.Length; k++)
+                        {
+                            if (current[k].m_Entity == payload.Target)
+                            {
+                                alreadyLinked = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!alreadyLinked)
+                    {
+                        // Create/overwrite a buffer to append our target link.
+                        // Using SetBuffer<T> is safe here; it creates the buffer if missing and returns a writer.
+                        var buf = ecb.SetBuffer<ChirpEntity>(e);
+                        buf.Add(new ChirpEntity(payload.Target));
+                    }
+                }
+
+                // 5) Remember the full payload per *instance* so UI patches (sender-name override, etc.)
+                //    can read it deterministically later.
+                RuntimeChirpTextBus.RememberAttached(e, payload);
             }
 
-            // Apply all adds now
             ecb.Playback(em);
             ecb.Dispose();
         }
