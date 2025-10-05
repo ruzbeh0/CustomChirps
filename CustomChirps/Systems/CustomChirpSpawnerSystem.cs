@@ -2,36 +2,25 @@
 using CustomChirps.Components;   // ModChirpText
 using CustomChirps.Systems;      // RuntimeChirpTextBus
 using Game.Prefabs;              // PrefabRef
-using Game.Triggers;             // Chirp, ChirpEntity
+using Game.Triggers;             // Chirp, ChirpEntity, CreateChirpSystem
 using Unity.Collections;
 using Unity.Entities;
 
 namespace CustomChirps.Systems
 {
-    /// <summary>
-    /// Moves queued runtime payloads (text key, sender, target) from RuntimeChirpTextBus
-    /// onto newly spawned chirp *instances*.
-    ///
-    /// Key bits:
-    ///   • Adds ModChirpText { Key = runtimeKey } so the UI resolves text from your runtime locale
-    ///   • Sets Chirp.m_Sender to the desired account entity
-    ///   • Ensures the *target* is stored in the ChirpEntity buffer (this is what makes the link clickable)
-    ///
-    /// Uses plain for-loops (no Entities.ForEach/Burst) to match your earlier request.
-    /// </summary>
+    // Ensure we see instances after vanilla has created them (buffer links populated)
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateAfter(typeof(CreateChirpSystem))]
     public partial class CustomChirpSpawnerSystem : SystemBase
     {
-        private EntityQuery _newChirpsQuery;
+        private EntityQuery _newChirps;
 
         protected override void OnCreate()
         {
             base.OnCreate();
-
-            // New chirps (instances) have Chirp + PrefabRef; we only process those
-            // that don't yet have our ModChirpText tag.
-            _newChirpsQuery = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<Game.Prefabs.Chirp, PrefabRef>()
-                .WithNone<ModChirpText>()
+            _newChirps = new EntityQueryBuilder(Allocator.Temp)
+                .WithAll<Game.Triggers.Chirp, PrefabRef>()
+                .WithNone<ModChirpText>()   // untouched new instances
                 .Build(EntityManager);
         }
 
@@ -39,8 +28,9 @@ namespace CustomChirps.Systems
         {
             var em = EntityManager;
 
-            using var entities = _newChirpsQuery.ToEntityArray(Allocator.Temp);
-            using var prefabRefs = _newChirpsQuery.ToComponentDataArray<PrefabRef>(Allocator.Temp);
+            using var entities = _newChirps.ToEntityArray(Allocator.Temp);
+            using var prefabRefs = _newChirps.ToComponentDataArray<PrefabRef>(Allocator.Temp);
+            using var chirps = _newChirps.ToComponentDataArray<Game.Triggers.Chirp>(Allocator.Temp);
             if (entities.Length == 0) return;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -49,59 +39,63 @@ namespace CustomChirps.Systems
             {
                 var e = entities[i];
                 var prefab = prefabRefs[i].m_Prefab;
-                if (prefab == Entity.Null)
-                    continue;
+                if (prefab == Entity.Null) continue;
 
-                // 1) Pull the next payload queued for THIS prefab.
-                if (!RuntimeChirpTextBus.TryDequeueForPrefab(prefab, out var payload))
-                    continue;
+                var current = chirps[i];
+                var actualSender = current.m_Sender;
 
-                // 2) Add the runtime text key to the instance so UI uses your text.
-                ecb.AddComponent(e, new ModChirpText { Key = payload.Key });
-
-                // 3) Set the sender (account entity) on the instance.
-                if (payload.Sender != Entity.Null && em.HasComponent<Game.Prefabs.Chirp>(e))
+                // Discover the building target actually attached by vanilla creation
+                Entity actualBuilding = Entity.Null;
+                if (em.HasBuffer<Game.Triggers.ChirpEntity>(e))
                 {
-                    var c = em.GetComponentData<Game.Triggers.Chirp>(e);
-                    if (c.m_Sender != payload.Sender)
+                    var links = em.GetBuffer<Game.Triggers.ChirpEntity>(e, true);
+                    for (int k = 0; k < links.Length; k++)
                     {
-                        c.m_Sender = payload.Sender;
-                        ecb.SetComponent(e, c);
-                    }
-                }
-
-                // 4) Ensure the clickable TARGET is present in the ChirpEntity buffer.
-                //    (Chirp has NO 'm_Target' field — targets are stored as buffer entries.)
-                if (payload.Target != Entity.Null)
-                {
-                    bool alreadyLinked = false;
-
-                    // Check any existing links *now* (before playback), to avoid duplicates.
-                    if (em.HasBuffer<ChirpEntity>(e))
-                    {
-                        var current = em.GetBuffer<ChirpEntity>(e, true); // readonly view is fine for checking
-                        for (int k = 0; k < current.Length; k++)
+                        var cand = links[k].m_Entity;
+                        if (cand != Entity.Null && em.HasComponent<Game.Buildings.Building>(cand))
                         {
-                            if (current[k].m_Entity == payload.Target)
-                            {
-                                alreadyLinked = true;
-                                break;
-                            }
+                            actualBuilding = cand;
+                            break;
                         }
                     }
+                }
 
-                    if (!alreadyLinked)
+                // 1) Prefer a target-keyed pending payload (guarantees the chirp with the link gets your payload)
+                ChirpPayload payload;
+                if (!RuntimeChirpTextBus.TryDequeueForTarget(actualBuilding, out payload))
+                {
+                    // 2) Fallback: match by prefab+sender+target (variant-aware if you already added that helper)
+                    if (!RuntimeChirpTextBus.TryDequeueBestMatchConsideringVariants(em, prefab, actualSender, actualBuilding, out payload))
                     {
-                        // Create/overwrite a buffer to append our target link.
-                        // Using SetBuffer<T> is safe here; it creates the buffer if missing and returns a writer.
-                        var buf = ecb.SetBuffer<ChirpEntity>(e);
-                        buf.Add(new ChirpEntity(payload.Target));
+                        // 3) Last resort: prefab-only
+                        if (!RuntimeChirpTextBus.TryDequeueForPrefab(prefab, out payload))
+                            continue;
                     }
                 }
 
-                // 5) Remember the full payload per *instance* so UI patches (sender-name override, etc.)
-                //    can read it deterministically later.
+                // Attach runtime text
+                // inside CustomChirpSpawnerSystem.OnUpdate(), after you've matched the payload and before RememberAttached(...)
+                ecb.AddComponent(e, new CustomChirps.Components.ModChirpText { Key = payload.Key });
+
+                // If you still want to control the icon, keep setting m_Sender here (optional):
+                if (payload.Sender != Entity.Null && current.m_Sender != payload.Sender)
+                {
+                    current.m_Sender = payload.Sender;
+                    ecb.SetComponent(e, current);
+                }
+
+                // <-- NEW: force a custom label regardless of which account prefab was resolved
+                if (payload.OverrideSenderName.Length > 0)
+                {
+                    ecb.AddComponent(e, new CustomChirps.Components.OverrideSender
+                    {
+                        Name = payload.OverrideSenderName
+                    });
+                }
+
                 RuntimeChirpTextBus.RememberAttached(e, payload);
+
+
             }
 
             ecb.Playback(em);

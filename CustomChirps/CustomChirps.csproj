@@ -78,4 +78,9 @@
 	  <PackageReference Include="Lib.Harmony" Version="2.2.2" />
 	</ItemGroup>
 
+	<ItemGroup>
+	  <Folder Include="Patches\" />
+	  <Folder Include="Prefabs\" />
+	</ItemGroup>
+
 </Project>

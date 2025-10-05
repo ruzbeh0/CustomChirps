@@ -1,75 +1,103 @@
 ﻿using System;
+using System.Collections.Generic;
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
-using Game.Buildings;
-using Game.Prefabs;
+
+using Game.Buildings;            // Building
+using CustomChirps.Systems;      // CustomChirpApiSystem, DepartmentAccount
 
 namespace CustomChirps.Systems
 {
+    /// <summary>
+    /// Simple test harness for the public API:
+    /// - Rotates custom sender names (never shows vanilla dept name)
+    /// - Rotates through DepartmentAccount enum to change the icon
+    /// - Alternates messages with/without a building link
+    /// </summary>
+    [BurstCompile]
     public partial class CustomChirpTestSystem : SystemBase
     {
-        private Entity _brandPf = Entity.Null;
-        private Entity _sender = Entity.Null;
-        private Entity _target = Entity.Null;
-        private float _timer;
-
-        private const string BrandNameHint = "News"; // change to match a BrandChirp prefab in your playset (e.g., "BusinessNews")
-
-        protected override void OnCreate()
+        private struct TestItem
         {
-            RequireForUpdate(GetEntityQuery(typeof(Game.Triggers.Chirp)));
+            public string Text;
+            public string CustomSenderName;     // what the UI should show as sender label
+            public DepartmentAccount Dept;      // which department icon to show
+            public bool WithTarget;             // add clickable building link
         }
 
-        // Systems/CustomChirpTestSystem.cs (OnStartRunning or after a short delay in OnUpdate)
+        private readonly List<TestItem> _plan = new List<TestItem>();
+        private int _cursor;
+        private float _timer;
+        private Entity _anyBuilding;
+
         protected override void OnStartRunning()
         {
-            var api = World.GetExistingSystemManaged<CustomChirpApiSystem>();
-            var em = World.EntityManager;
+            var em = EntityManager;
 
-            // pick any existing account as the technical sender (icon & infoview still come from it)
-            Entity sender = Entity.Null;
-            using (var accounts = em.CreateEntityQuery(ComponentType.ReadOnly<Game.Prefabs.ChirperAccountData>())
-                                    .ToEntityArray(Unity.Collections.Allocator.Temp))
-                if (accounts.Length > 0) sender = accounts[0];
-
-            if (sender != Entity.Null)
+            // Try to grab *any* building so we can test links
+            using (var arr = em.CreateEntityQuery(ComponentType.ReadOnly<Building>())
+                               .ToEntityArray(Allocator.Temp))
             {
-                // show custom *text* as sender
-                CustomChirpApiSystem.PostFromSender(
-                    senderAccount: sender,
-                    text: "Custom msg – sent with a custom sender text 🎯",
-                    senderDisplayName: "Realistic Trips Mod"
-                );
+                _anyBuilding = arr.Length > 0 ? arr[0] : Entity.Null;
+            }
+
+            // Custom sender names (what shows in the UI)
+            var customNames = new[]
+            {
+                "Realistic Trips Mod",
+                "Traffic AI+",
+                "Skyline Stats",
+                "Metro Manager",
+                "Waste Watch",
+                "City Life Kit",
+            };
+
+            // All department icons we’ll rotate through
+            var depts = (DepartmentAccount[])Enum.GetValues(typeof(DepartmentAccount));
+
+            // Build the plan: 12 messages total
+            int nameIdx = 0;
+            int deptIdx = 0;
+            for (int i = 0; i < 12; i++)
+            {
+                var name = customNames[nameIdx % customNames.Length];
+                var dep = depts[deptIdx % depts.Length];
+
+                _plan.Add(new TestItem
+                {
+                    CustomSenderName = name,
+                    Dept = dep,
+                    // Note: The API will auto-append {LINK_1} if we pass a building and it's not present
+                    Text = $"[#{i + 1}] Custom free text from '{name}'"
+                                       + (i % 2 == 0 ? " (with target)" : " (no target)"),
+                    WithTarget = (i % 2 == 0) && _anyBuilding != Entity.Null
+                });
+
+                nameIdx++;
+                deptIdx++;
             }
         }
 
-
         protected override void OnUpdate()
         {
-            if (_brandPf == Entity.Null) return;
+            if (_plan.Count == 0 || _cursor >= _plan.Count) return;
 
+            // Emit one message every ~4s so UI is readable
             _timer += SystemAPI.Time.DeltaTime;
-            if (_timer < 8f) return;
+            if (_timer < 4f) return;
             _timer = 0f;
 
-            // Pick/keep any account entity for the icon (or resolve one by hint)
-            if (_sender == Entity.Null)
-                _sender = CustomChirpApiSystem.ResolveAnyAccount("Education");
-            // change the hint for a different avatar, or ""
+            var item = _plan[_cursor++];
+            var target = item.WithTarget ? _anyBuilding : Entity.Null;
 
-            // Use your *custom* sender text here:
-            const string CustomSender = "Realistic Trips Mod";
-
-            CustomChirpApiSystem.PostViaBrandWithCustomSenderName(
-                brandPrefab: _brandPf,
-                senderAccount: _sender,
-                senderName: CustomSender,
-                text: $"[Brand Demo] {System.DateTime.Now:T} — custom sender text & stable target",
-                optionalTarget: _target
+            // One-call API: choose icon via DepartmentAccount, pass custom sender label, free text, and optional building
+            CustomChirpApiSystem.PostChirp(
+                text: item.Text,
+                department: item.Dept,
+                building: target,
+                customSenderName: item.CustomSenderName
             );
         }
-
-
-
     }
 }
