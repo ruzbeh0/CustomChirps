@@ -40,18 +40,15 @@ namespace CustomChirps.Systems
     }
 
     /// <summary>
-    /// Minimal, public API for other mods to post Chirper messages.
-    /// One entry point: PostChirp(text, department, optional building, optional custom sender name)
-    /// - Department selects the icon (underlying account).
-    /// - customSenderName (if provided) is what the UI shows as the sender label (your patches will apply it).
-    /// - If building != Entity.Null, we auto-append "{LINK_1}" to the text (if not already present) so it's clickable.
-    /// Register this system in Mod.OnLoad:
-    ///   updateSystem.UpdateAt<CustomChirpApiSystem>(SystemUpdatePhase.GameSimulation);
+    /// Minimal public API for other mods to post Chirper messages.
+    /// - Department selects the icon (underlying Chirper account).
+    /// - customSenderName (if provided) is what the UI shows as the sender label (your patches apply it).
+    /// - If a non-null target entity is provided and no {LINK_*} token exists, "{LINK_1}" is appended automatically.
     /// </summary>
     public sealed partial class CustomChirpApiSystem : SystemBase
     {
         private static CustomChirpApiSystem _instance;
-        private static readonly ILog _log = LogManager.GetLogger("CustomChirps.Api");
+        private static readonly ILog _log = Mod.log;
 
         // Fallback generic chirp prefab (any with ChirpData) if none explicitly configured
         private Entity _chirpPrefabEntity;
@@ -64,12 +61,12 @@ namespace CustomChirps.Systems
         // ----------------------- Public API -----------------------
 
         /// <summary>
-        /// Post a free-text chirp selecting department (icon), optional building link, and optional visible sender name override.
+        /// Post a chirp using a prefab as the target hint. The API will try to resolve an instance entity of this prefab.
         /// </summary>
         public static void PostChirp(
             string text,
             DepartmentAccount department,
-            Entity building = default,
+            PrefabBase targetPrefab,
             string customSenderName = null)
         {
             var inst = _instance;
@@ -79,22 +76,11 @@ namespace CustomChirps.Systems
                 return;
             }
 
-            inst.EnqueueChirp(text, department, building, customSenderName);
-        }
+            Entity entity = Entity.Null;
+            if (targetPrefab != null)
+                inst.TryResolveEntityFromPrefab(targetPrefab, out entity);
 
-        /// <summary>
-        /// Optional: configure a specific chirp prefab asset to use as the trigger source.
-        /// If not called, the system will auto-discover a generic ChirpData prefab.
-        /// </summary>
-        public void ConfigureDefaultChirpPrefab(PrefabBase chirpPrefab)
-        {
-            if (chirpPrefab == null)
-            {
-                _log.Warn("[CustomChirps] ConfigureDefaultChirpPrefab called with null asset.");
-                return;
-            }
-            _chirpPrefabEntity = Util.PrefabLookup.GetPrefabEntity(World, chirpPrefab);
-            _log.Info($"[CustomChirps] Default chirp prefab set to {_chirpPrefabEntity}.");
+            inst.EnqueueChirp(text, department, entity, customSenderName);
         }
 
         // ----------------------- Internals ------------------------
@@ -152,7 +138,7 @@ namespace CustomChirps.Systems
             _didInit = true;
         }
 
-        private void EnqueueChirp(string text, DepartmentAccount dept, Entity building, string customSenderName)
+        private void EnqueueChirp(string text, DepartmentAccount dept, Entity anyTarget, string customSenderName)
         {
             EnsureInit();
 
@@ -170,9 +156,9 @@ namespace CustomChirps.Systems
                 return;
             }
 
-            // Auto-insert {LINK_1} if a building is supplied and the text has no link token
+            // Auto-insert {LINK_1} if a target is supplied and the text has no link token
             string finalText = text ?? string.Empty;
-            if (building != Entity.Null &&
+            if (anyTarget != Entity.Null &&
                 finalText.IndexOf("{LINK_", StringComparison.Ordinal) < 0)
             {
                 finalText = finalText + " {LINK_1}";
@@ -188,7 +174,7 @@ namespace CustomChirps.Systems
             {
                 Key = new FixedString512Bytes(key),
                 Sender = senderAccount,                                // icon source
-                Target = building,                                      // clickable link (via CreateChirpSystem)
+                Target = anyTarget,                                     // clickable link (via CreateChirpSystem)
                 OverrideSenderName = new FixedString128Bytes(customSenderName ?? "")// visible label (your UI patch uses it)
             };
             RuntimeChirpTextBus.EnqueuePending(_chirpPrefabEntity, in payload);
@@ -200,11 +186,48 @@ namespace CustomChirps.Systems
             {
                 m_TriggerPrefab = _chirpPrefabEntity,
                 m_Sender = senderAccount,
-                m_Target = building
+                m_Target = anyTarget
             });
             create.AddQueueWriter(deps);
 
-            _log.Info($"[CustomChirps] Queued chirp (dept={dept}, sender={senderAccount}, target={(building == Entity.Null ? "None" : building.ToString())}).");
+            _log.Info($"[CustomChirps] Queued chirp (dept={dept}, sender={senderAccount}, target={(anyTarget == Entity.Null ? "None" : anyTarget.ToString())}).");
+        }
+
+        // Try to find an instance entity for the given prefab by matching PrefabRef.m_Prefab
+        private bool TryResolveEntityFromPrefab(PrefabBase prefab, out Entity entity)
+        {
+            entity = Entity.Null;
+            if (prefab == null) return false;
+
+            var wanted = Util.PrefabLookup.GetPrefabEntity(World, prefab);
+            if (wanted == Entity.Null) return false;
+
+            var em = EntityManager;
+
+            using var q = new EntityQueryBuilder(Allocator.Temp)
+                .WithAll<PrefabRef>()
+                .Build(em);
+
+            using var chunks = q.ToArchetypeChunkArray(Allocator.Temp);
+            var typePrefabRef = GetComponentTypeHandle<PrefabRef>(true);
+            var typeEntity = GetEntityTypeHandle();
+
+            for (int c = 0; c < chunks.Length; c++)
+            {
+                var chunk = chunks[c];
+                var prefs = chunk.GetNativeArray(typePrefabRef);
+                var ents = chunk.GetNativeArray(typeEntity);
+
+                for (int i = 0; i < ents.Length; i++)
+                {
+                    if (prefs[i].m_Prefab == wanted)
+                    {
+                        entity = ents[i];
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         // ---- Department resolver ----

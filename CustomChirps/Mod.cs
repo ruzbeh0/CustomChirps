@@ -22,7 +22,7 @@ namespace CustomChirps
         public static PrefabBase OtherModChirperAccountPrefab;
         public static PrefabBase ChirpPrefab;
 
-        private Setting m_Setting;
+        public static Setting m_Setting;
 
         public void OnLoad(UpdateSystem updateSystem)
         {
@@ -39,7 +39,7 @@ namespace CustomChirps
             // Make our ECS systems run during the game simulation loop
             updateSystem.UpdateAt<CustomChirps.Systems.CustomChirpApiSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateAt<CustomChirps.Systems.CustomChirpSpawnerSystem>(SystemUpdatePhase.GameSimulation);
-            updateSystem.UpdateAt<CustomChirps.Systems.CustomChirpTestSystem>(SystemUpdatePhase.GameSimulation);
+            //updateSystem.UpdateAt<CustomChirps.Systems.CustomChirpTestSystem>(SystemUpdatePhase.GameSimulation);
 
 
             // --- Harmony (your standard flow) ---

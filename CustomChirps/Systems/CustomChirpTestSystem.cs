@@ -91,13 +91,13 @@ namespace CustomChirps.Systems
             var item = _plan[_cursor++];
             var target = item.WithTarget ? _anyBuilding : Entity.Null;
 
-            // One-call API: choose icon via DepartmentAccount, pass custom sender label, free text, and optional building
-            CustomChirpApiSystem.PostChirp(
-                text: item.Text,
-                department: item.Dept,
-                building: target,
-                customSenderName: item.CustomSenderName
-            );
+            //// One-call API: choose icon via DepartmentAccount, pass custom sender label, free text, and optional building
+            //CustomChirpApiSystem.PostChirp(
+            //    text: item.Text,
+            //    department: item.Dept,
+            //    building: target,
+            //    customSenderName: item.CustomSenderName
+            //);
         }
     }
 }
