@@ -61,12 +61,13 @@ namespace CustomChirps.Systems
         // ----------------------- Public API -----------------------
 
         /// <summary>
-        /// Post a chirp using a prefab as the target hint. The API will try to resolve an instance entity of this prefab.
+        /// Post a chirp selecting department (icon) and a target ENTITY (any ECS entity).
+        /// If a target is provided and "{LINK_*}" is not present in the text, "{LINK_1}" is appended automatically.
         /// </summary>
         public static void PostChirp(
             string text,
             DepartmentAccount department,
-            PrefabBase targetPrefab,
+            Entity targetEntity,
             string customSenderName = null)
         {
             var inst = _instance;
@@ -76,11 +77,7 @@ namespace CustomChirps.Systems
                 return;
             }
 
-            Entity entity = Entity.Null;
-            if (targetPrefab != null)
-                inst.TryResolveEntityFromPrefab(targetPrefab, out entity);
-
-            inst.EnqueueChirp(text, department, entity, customSenderName);
+            inst.EnqueueChirp(text, department, targetEntity, customSenderName);
         }
 
         // ----------------------- Internals ------------------------

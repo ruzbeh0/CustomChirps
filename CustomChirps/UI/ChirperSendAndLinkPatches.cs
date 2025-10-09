@@ -39,6 +39,7 @@ namespace CustomChirps.UI
                 if (world == null || entity == Entity.Null) return;
 
                 var em = world.EntityManager;
+
                 if (!em.Exists(entity)) return;
 
                 // The payload is attached to the *chirp entity* (the 'entity' parameter here).

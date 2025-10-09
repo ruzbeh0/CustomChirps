@@ -41,7 +41,7 @@ namespace CustomChirps.Systems
             if (entities.Length == 0) return;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
-            int allowPct = Mod.m_Setting.VanillaVisibilityPercent; // 0..100 from settings UI
+            int allowPct = 100; // 0..100 from settings UI
             allowPct = math.clamp(allowPct, 0, 100);
 
             for (int i = 0; i < entities.Length; i++)

@@ -2,16 +2,20 @@
 	<!--Id must be set in order to update existed mod. it is not required for publishing mod for the first time-->
 	<ModId Value="" />
 	<!--Name of the mod to display to players-->
-	<DisplayName Value="CustomChirps" />
+	<DisplayName Value="Custom Chirps" />
 	<!--Short description of the mod-->
-	<ShortDescription Value="This is a short description" />
+	<ShortDescription Value="This mod allows other mods to send custom chirps" />
 	<!--Long description of the mod. Single line or multi line. Supports minimal markdown subset-->
 	<!--LongDescription Value="This is a long description" /-->
 	<LongDescription>
-This is a long description
+This mod offers an API for other mods to send custom chirps.
+
+Currently, it doesn't have any option to configure chirps, but that will be added in the future.
+
+**Modders**: see the GitHub or Discord link for instructions on how to use the API.
 	</LongDescription>
 	<!--Thumbnail-->
-	<Thumbnail Value="Properties/Thumbnail.png" />
+	<Thumbnail Value="Properties/logo.jpg" />
 	<!--Screenshot, can be set multiple times-->
 	<Screenshot Value="" />
 	<!--Tag, can be set multiple times-->
@@ -19,9 +23,9 @@ This is a long description
 	<!--Link to the forum post where the mod can be discussed-->
 	<ForumLink Value="" />
 	<!--Version of the mod-->
-	<ModVersion Value="1.0" />
+	<ModVersion Value="0.1" />
 	<!--Recommended version of the base game to use the mod-->
-	<GameVersion Value="1.0.*" />
+	<GameVersion Value="1.3.*" />
 	<!--Dependency for the mod, can be set multiple times-->
 	<Dependency Id="" />
 	<!--Required DLC, can be set multiple times. Supported values are "Landmark Buildings", "San Fransisco Set", "Beach Properties", "Urban Promenades", "Modern Architecture"-->
@@ -31,5 +35,8 @@ This is a long description
 	<!--<ChangeLog>
 	</ChangeLog>-->
 	<!--External link, can be set multiple times. supported types are "discord", "github", "youtube", "twitch", "x", "paypal", "patreon", "buymeacoffee", "kofi", "crowdin", "gitlab", "gofundme"-->
-	<ExternalLink Type="" Url="" />
+	<ExternalLink Type="github" Url="https://github.com/ruzbeh0/Time2Work" />
+	<ExternalLink Type="discord" Url="https://discord.com/channels/1024242828114673724/1224077120641302558" />
+	<ExternalLink Type="paypal" Url="https://www.paypal.com/paypalme/ruzbeh0" />
+	<ExternalLink Type="kofi" Url="https://ko-fi.com/ruzbeh0" />
 </Publish>

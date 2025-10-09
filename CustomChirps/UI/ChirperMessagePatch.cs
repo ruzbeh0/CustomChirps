@@ -15,6 +15,7 @@ namespace CustomChirps.UI
         public static bool Prefix(ref string __result, Entity chirp)
         {
             var world = World.DefaultGameObjectInjectionWorld;
+
             if (world == null || chirp == Entity.Null) return true;
 
             var em = world.EntityManager;
