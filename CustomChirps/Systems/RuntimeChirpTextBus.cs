@@ -1,191 +1,237 @@
 ﻿// Systems/RuntimeChirpTextBus.cs
+
 using System.Collections.Generic;
+
 using Unity.Collections;
 using Unity.Entities;
 
-namespace CustomChirps.Systems
+namespace CustomChirps.Systems;
+
+public struct ChirpPayload
 {
-    public struct ChirpPayload
+    public FixedString512Bytes Key; // custom text
+    public Entity Sender; // desired account/icon
+    public Entity Target; // optional building to link
+    public FixedString128Bytes OverrideSenderName; // custom sender label for UI
+}
+
+internal class PendingItem
+{
+    public Entity Prefab; // trigger/service/brand prefab used to queue
+    public ChirpPayload Payload;
+    public ulong Ticket; // FIFO for tie-breaking
+}
+internal class PendingItemComparer : IComparer<PendingItem>
+{
+    public int Compare(PendingItem x, PendingItem y)
     {
-        public FixedString512Bytes Key;                 // custom text
-        public Entity Sender;              // desired account/icon
-        public Entity Target;              // optional building to link
-        public FixedString128Bytes OverrideSenderName;  // custom sender label for UI
+        if (x == null || y == null)
+            return x == y ? 0 : (x == null ? -1 : 1);
+        return x.Ticket.CompareTo(y.Ticket);
     }
+}
 
-    internal struct PendingItem
+public static class RuntimeChirpTextBus
+{
+    private static ulong _nextTicket;
+    private static readonly PendingItemComparer Comparer = new();
+
+    private static readonly SortedSet<PendingItem> Pending = new(Comparer);
+    private static readonly Dictionary<Entity, SortedSet<PendingItem>> PendingByTarget = new();
+    private static readonly Dictionary<Entity, SortedSet<PendingItem>> PendingByPrefab = new();
+    private static readonly Dictionary<ulong, PendingItem> TicketToItem = new();
+    private static readonly Dictionary<Entity, ChirpPayload> Attached = new();
+
+    public static void EnqueuePending(Entity prefab, in ChirpPayload payload)
     {
-        public Entity Prefab;     // trigger/service/brand prefab used to queue
-        public ChirpPayload Payload;
-        public ulong Ticket;      // FIFO for tie-breaking
-    }
+        if (prefab == Entity.Null) return;
 
-    public static class RuntimeChirpTextBus
-    {
-        // Global pending list (for fallbacks / scans)
-        private static readonly List<PendingItem> _pending = new();
-        private static ulong _nextTicket;
+        ulong ticket = _nextTicket++;
 
-        // Pending items indexed by building target (most reliable discriminator)
-        private static readonly Dictionary<Entity, List<PendingItem>> _pendingByTarget = new();
-
-        // Attached payloads (per spawned chirp instance)
-        private static readonly Dictionary<Entity, ChirpPayload> _attached = new();
-
-        // --------------------------------------------------------------------
-        // Enqueue payload for a prefab (and optionally index by target)
-        // --------------------------------------------------------------------
-        public static void EnqueuePending(Entity prefab, in ChirpPayload payload)
+        var item = new PendingItem
         {
-            if (prefab == Entity.Null) return;
+            Prefab = prefab,
+            Payload = payload,
+            Ticket = ticket
+        };
 
-            var item = new PendingItem
+        Pending.Add(item);
+        TicketToItem[ticket] = item;
+
+        if (payload.Target != Entity.Null)
+        {
+            if (!PendingByTarget.TryGetValue(payload.Target, out var set))
             {
-                Prefab = prefab,
-                Payload = payload,
-                Ticket = _nextTicket++
-            };
-
-            _pending.Add(item);
-
-            if (payload.Target != Entity.Null)
-            {
-                if (!_pendingByTarget.TryGetValue(payload.Target, out var list))
-                    _pendingByTarget[payload.Target] = list = new List<PendingItem>(2);
-                list.Add(item);
+                set = new SortedSet<PendingItem>(Comparer);
+                PendingByTarget[payload.Target] = set;
             }
+            set.Add(item);
         }
 
-        // --------------------------------------------------------------------
-        // Target-first dequeue: exact building match wins
-        // --------------------------------------------------------------------
-        public static bool TryDequeueForTarget(Entity target, out ChirpPayload payload)
+        if (!PendingByPrefab.TryGetValue(prefab, out var prefabSet))
         {
-            if (target != Entity.Null && _pendingByTarget.TryGetValue(target, out var list) && list.Count > 0)
-            {
-                int bestIdx = 0;
-                ulong bestTicket = list[0].Ticket;
-                for (int i = 1; i < list.Count; i++)
-                {
-                    if (list[i].Ticket < bestTicket) { bestIdx = i; bestTicket = list[i].Ticket; }
-                }
+            prefabSet = new SortedSet<PendingItem>(Comparer);
+            PendingByPrefab[prefab] = prefabSet;
+        }
+        prefabSet.Add(item);
+    }
 
-                var chosen = list[bestIdx];
-                list.RemoveAt(bestIdx);
-                if (list.Count == 0) _pendingByTarget.Remove(target);
-
-                // remove the same item from the global list
-                for (int i = 0; i < _pending.Count; i++)
-                {
-                    if (_pending[i].Ticket == chosen.Ticket) { _pending.RemoveAt(i); break; }
-                }
-
-                payload = chosen.Payload;
-                return true;
-            }
-
+    public static bool TryDequeueForTarget(Entity target, out ChirpPayload payload)
+    {
+        if (target == Entity.Null || !PendingByTarget.TryGetValue(target, out var set) || set.Count == 0)
+        {
             payload = default;
             return false;
         }
 
-        // --------------------------------------------------------------------
-        // Plain prefab-only dequeue (compat / last resort)
-        // --------------------------------------------------------------------
-        public static bool TryDequeueForPrefab(Entity prefab, out ChirpPayload payload)
+        var item = set.Min;
+        set.Remove(item);
+
+        if (set.Count == 0)
+            PendingByTarget.Remove(target);
+
+        RemoveFromAllIndices(item);
+
+        payload = item.Payload;
+        return true;
+    }
+
+    public static bool TryDequeueForPrefab(Entity prefab, out ChirpPayload payload)
+    {
+        if (!PendingByPrefab.TryGetValue(prefab, out var set) || set.Count == 0)
         {
-            for (int i = 0; i < _pending.Count; i++)
-            {
-                if (_pending[i].Prefab == prefab)
-                {
-                    payload = _pending[i].Payload;
-                    _pending.RemoveAt(i);
-                    return true;
-                }
-            }
             payload = default;
             return false;
         }
 
-        // --------------------------------------------------------------------
-        // Variant-aware best match:
-        //   match if pending.Prefab == instanceChirpPrefab OR
-        //   pending.Prefab has TriggerChirpData listing instanceChirpPrefab
-        // Score by target (strong) + sender (weak)
-        // --------------------------------------------------------------------
-        public static bool TryDequeueBestMatchConsideringVariants(
-            EntityManager em,
-            Entity instanceChirpPrefab,
-            Entity sender,
-            Entity target,
-            out ChirpPayload payload)
+        var item = set.Min;
+        set.Remove(item);
+
+        if (set.Count == 0)
+            PendingByPrefab.Remove(prefab);
+
+        RemoveFromAllIndices(item);
+
+        payload = item.Payload;
+        return true;
+    }
+
+    public static bool TryDequeueBestMatchConsideringVariants(
+        EntityManager em,
+        Entity instanceChirpPrefab,
+        Entity sender,
+        Entity target,
+        out ChirpPayload payload)
+    {
+        PendingItem bestItem = null;
+        int bestScore = -1;
+        ulong bestTicket = ulong.MaxValue;
+
+        var candidates = new List<PendingItem>(16);
+
+        if (PendingByPrefab.TryGetValue(instanceChirpPrefab, out var directSet))
         {
-            int bestIndex = -1;
-            int bestScore = -1;
-            ulong bestTicket = ulong.MaxValue;
+            candidates.AddRange(directSet);
+        }
 
-            for (int i = 0; i < _pending.Count; i++)
+        foreach (var kvp in PendingByPrefab)
+        {
+            if (kvp.Key == instanceChirpPrefab) continue;
+
+            if (em.HasBuffer<Game.Prefabs.TriggerChirpData>(kvp.Key))
             {
-                var item = _pending[i];
+                var buf = em.GetBuffer<Game.Prefabs.TriggerChirpData>(kvp.Key, true);
+                bool hasVariant = false;
 
-                bool prefabMatches = item.Prefab == instanceChirpPrefab;
-
-                // If the queued prefab was a trigger/service prefab, check its variants
-                if (!prefabMatches && em.HasBuffer<Game.Prefabs.TriggerChirpData>(item.Prefab))
+                for (int k = 0; k < buf.Length; k++)
                 {
-                    var buf = em.GetBuffer<Game.Prefabs.TriggerChirpData>(item.Prefab, true);
-                    for (int k = 0; k < buf.Length; k++)
+                    if (buf[k].m_Chirp == instanceChirpPrefab)
                     {
-                        if (buf[k].m_Chirp == instanceChirpPrefab)
-                        {
-                            prefabMatches = true;
-                            break;
-                        }
+                        hasVariant = true;
+                        break;
                     }
                 }
 
-                if (!prefabMatches) continue;
-
-                int score = 0;
-                if (item.Payload.Target != Entity.Null && target != Entity.Null && item.Payload.Target == target)
-                    score += 2; // strongest signal
-                if (item.Payload.Sender != Entity.Null && sender != Entity.Null && item.Payload.Sender == sender)
-                    score += 1;
-
-                if (score > bestScore || (score == bestScore && item.Ticket < bestTicket))
+                if (hasVariant)
                 {
-                    bestScore = score;
-                    bestTicket = item.Ticket;
-                    bestIndex = i;
+                    candidates.AddRange(kvp.Value);
                 }
             }
-
-            if (bestIndex >= 0)
-            {
-                payload = _pending[bestIndex].Payload;
-                _pending.RemoveAt(bestIndex);
-                return true;
-            }
-
-            payload = default;
-            return false;
         }
 
-        // --------------------------------------------------------------------
-        // Per-instance storage for UI patches
-        // --------------------------------------------------------------------
-        public static void RememberAttached(Entity instance, in ChirpPayload payload)
+        foreach (var item in candidates)
         {
-            if (instance != Entity.Null)
-                _attached[instance] = payload;
+            var score = 0;
+            if (item.Payload.Target != Entity.Null && target != Entity.Null && item.Payload.Target == target)
+                score += 2;
+            if (item.Payload.Sender != Entity.Null && sender != Entity.Null && item.Payload.Sender == sender)
+                score += 1;
+
+            if (score <= bestScore && (score != bestScore || item.Ticket >= bestTicket)) continue;
+            bestScore = score;
+            bestTicket = item.Ticket;
+            bestItem = item;
         }
 
-        public static bool TryGetAttached(Entity instance, out ChirpPayload payload)
-            => _attached.TryGetValue(instance, out payload);
-
-        public static void Forget(Entity instance)
+        if (bestItem != null)
         {
-            if (instance != Entity.Null)
-                _attached.Remove(instance);
+            RemoveFromAllIndices(bestItem);
+
+            payload = bestItem.Payload;
+            return true;
+        }
+
+        payload = default;
+        return false;
+    }
+
+    private static void RemoveFromAllIndices(PendingItem item)
+    {
+        Pending.Remove(item);
+        TicketToItem.Remove(item.Ticket);
+
+        if (item.Payload.Target != Entity.Null &&
+            PendingByTarget.TryGetValue(item.Payload.Target, out var targetSet))
+        {
+            targetSet.Remove(item);
+            if (targetSet.Count == 0)
+                PendingByTarget.Remove(item.Payload.Target);
+        }
+
+        if (PendingByPrefab.TryGetValue(item.Prefab, out var prefabSet))
+        {
+            prefabSet.Remove(item);
+            if (prefabSet.Count == 0)
+                PendingByPrefab.Remove(item.Prefab);
         }
     }
+
+    public static void RememberAttached(Entity instance, in ChirpPayload payload)
+    {
+        if (instance != Entity.Null)
+            Attached[instance] = payload;
+    }
+
+    public static bool TryGetAttached(Entity instance, out ChirpPayload payload)
+        => Attached.TryGetValue(instance, out payload);
+
+    public static void Forget(Entity instance)
+    {
+        if (instance != Entity.Null)
+            Attached.Remove(instance);
+    }
+
+    public static void Clear()
+    {
+        Pending.Clear();
+        PendingByTarget.Clear();
+        PendingByPrefab.Clear();
+        TicketToItem.Clear();
+        Attached.Clear();
+        _nextTicket = 0;
+    }
+
+    internal static int GetPendingCount() => Pending.Count;
+
+    internal static IEnumerable<PendingItem> GetPendingItems() => Pending;
 }

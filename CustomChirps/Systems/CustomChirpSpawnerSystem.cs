@@ -1,21 +1,22 @@
 ﻿// Systems/CustomChirpSpawnerSystem.cs
 using CustomChirps.Components;
-using CustomChirps.Systems;
+
+using Game;
 using Game.Prefabs;
 using Game.Triggers;
+
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
-using Unity.Burst;
 
 namespace CustomChirps.Systems
 {
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(CreateChirpSystem))]
-    public partial class CustomChirpSpawnerSystem : SystemBase
+    public partial class CustomChirpSpawnerSystem : GameSystemBase
     {
         private EntityQuery _newChirps;
-        private Unity.Mathematics.Random _rng;
+        private Random _rng;
 
         protected override void OnCreate()
         {
@@ -26,9 +27,9 @@ namespace CustomChirps.Systems
                 .Build(EntityManager);
 
             // seed RNG (must be non-zero)
-            uint seed = (uint)System.Environment.TickCount;
+            var seed = (uint)System.Environment.TickCount;
             if (seed == 0) seed = 1;
-            _rng = new Unity.Mathematics.Random(seed);
+            _rng = new Random(seed);
         }
 
         protected override void OnUpdate()
@@ -71,7 +72,7 @@ namespace CustomChirps.Systems
 
                 // Try to match our payload (target-first, then variant-aware, then prefab-only)
                 ChirpPayload payload;
-                bool matched =
+                var matched =
                     RuntimeChirpTextBus.TryDequeueForTarget(actualTarget, out payload) ||
                     RuntimeChirpTextBus.TryDequeueBestMatchConsideringVariants(em, prefab, actualSender, actualTarget, out payload) ||
                     RuntimeChirpTextBus.TryDequeueForPrefab(prefab, out payload);
@@ -91,7 +92,6 @@ namespace CustomChirps.Systems
                         if (roll >= allowPct)
                         {
                             ecb.DestroyEntity(e);
-                            continue;
                         }
                     }
 
@@ -112,7 +112,7 @@ namespace CustomChirps.Systems
                 // Optionally stamp override label component if your UI patch uses it
                 if (payload.OverrideSenderName.Length > 0)
                 {
-                    ecb.AddComponent(e, new CustomChirps.Components.OverrideSender
+                    ecb.AddComponent(e, new OverrideSender
                     {
                         Name = payload.OverrideSenderName
                     });

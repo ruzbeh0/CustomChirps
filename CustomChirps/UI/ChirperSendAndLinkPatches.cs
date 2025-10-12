@@ -108,12 +108,12 @@ namespace CustomChirps.UI
             // NOTE: we accept 'ref object name' so we can assign the new struct instance.
             public static void Prefix(IJsonWriter binder, Entity entity, ref object name)
             {
-                if (string.IsNullOrEmpty(ChirperSenderAndLinkPatches.PendingSenderName))
+                if (string.IsNullOrEmpty(PendingSenderName))
                     return;
 
                 try
                 {
-                    var nameBoxed = BuildCustomNameBoxed(name?.GetType(), ChirperSenderAndLinkPatches.PendingSenderName);
+                    var nameBoxed = BuildCustomNameBoxed(name?.GetType(), PendingSenderName);
                     if (nameBoxed != null)
                     {
                         name = nameBoxed; // assign the new struct instance
@@ -126,7 +126,7 @@ namespace CustomChirps.UI
                 finally
                 {
                     // Consume so we only affect the sender link for this chirp
-                    ChirperSenderAndLinkPatches.PendingSenderName = null;
+                    PendingSenderName = null;
                 }
             }
 

@@ -1,11 +1,13 @@
-﻿using System;
+﻿using CustomChirps.Systems;      // CustomChirpApiSystem, DepartmentAccount
+
+using Game.Buildings;            // Building
+
+using System;
 using System.Collections.Generic;
+using Game;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
-
-using Game.Buildings;            // Building
-using CustomChirps.Systems;      // CustomChirpApiSystem, DepartmentAccount
 
 namespace CustomChirps.Systems
 {
@@ -16,7 +18,7 @@ namespace CustomChirps.Systems
     /// - Alternates messages with/without a building link
     /// </summary>
     [BurstCompile]
-    public partial class CustomChirpTestSystem : SystemBase
+    public partial class CustomChirpTestSystem : GameSystemBase
     {
         private struct TestItem
         {
@@ -54,7 +56,7 @@ namespace CustomChirps.Systems
             };
 
             // All department icons we’ll rotate through
-            var depts = (DepartmentAccount[])Enum.GetValues(typeof(DepartmentAccount));
+            var departmentAccounts = (DepartmentAccount[])Enum.GetValues(typeof(DepartmentAccount));
 
             // Build the plan: 12 messages total
             int nameIdx = 0;
@@ -62,7 +64,7 @@ namespace CustomChirps.Systems
             for (int i = 0; i < 12; i++)
             {
                 var name = customNames[nameIdx % customNames.Length];
-                var dep = depts[deptIdx % depts.Length];
+                var dep = departmentAccounts[deptIdx % departmentAccounts.Length];
 
                 _plan.Add(new TestItem
                 {
@@ -89,7 +91,6 @@ namespace CustomChirps.Systems
             _timer = 0f;
 
             var item = _plan[_cursor++];
-            var target = item.WithTarget ? _anyBuilding : Entity.Null;
 
             //// One-call API: choose icon via DepartmentAccount, pass custom sender label, free text, and optional building
             //CustomChirpApiSystem.PostChirp(
