@@ -49,6 +49,7 @@ namespace CustomChirps.Systems
 
         private Entity _chirpPrefabEntity;
         private bool _didInit;
+        private RuntimeLocalizationWindow? _localizationWindow;
 
         /// <summary>
         /// Post a chirp selecting department (icon) and a target ENTITY (any ECS entity).
@@ -58,7 +59,7 @@ namespace CustomChirps.Systems
             string text,
             DepartmentAccount department,
             Entity targetEntity,
-            string customSenderName = null)
+            string? customSenderName = null)
         {
             var inst = _instance;
             if (inst == null)
@@ -67,7 +68,13 @@ namespace CustomChirps.Systems
                 return;
             }
 
-            inst.EnqueueChirp(text, department, targetEntity, customSenderName);
+            if (customSenderName != null) inst.EnqueueChirp(text, department, targetEntity, customSenderName);
+        }
+
+        public static void ClearWindow()
+        {
+            var inst = _instance;
+            inst?._localizationWindow?.Clear();
         }
 
         protected override void OnCreate()
@@ -139,14 +146,15 @@ namespace CustomChirps.Systems
             }
 
             // Create a runtime localization key
-            var key = $"customchirps:{DateTime.UtcNow.Ticks:x}";
+            var key = $"CustomChirps:{Guid.NewGuid().ToString()}";
             var runtimeDict = I18NBridge.GetDictionary();
             if (runtimeDict is null)
             {
                 return;
             }
 
-            runtimeDict.Add(key, finalText);
+            _localizationWindow ??= new RuntimeLocalizationWindow(runtimeDict);
+            _localizationWindow.AddWithWindowManagement(key, finalText);
 
             // Hand payload to our spawner via the bus
             var payload = new ChirpPayload
