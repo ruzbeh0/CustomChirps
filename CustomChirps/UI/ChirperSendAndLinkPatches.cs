@@ -121,7 +121,7 @@ namespace CustomChirps.UI
                 }
                 catch (Exception ex)
                 {
-                    Mod.log.Warn($"[BindChirpLink_Patch] Failed to set custom name: {ex}");
+                    Mod.Logger.Warn($"[BindChirpLink_Patch] Failed to set custom name: {ex}");
                 }
                 finally
                 {
@@ -149,7 +149,7 @@ namespace CustomChirps.UI
 
                 if (customName == null)
                 {
-                    Mod.log.Warn("[BindChirpLink_Patch] Could not find CustomName(string) via reflection.");
+                    Mod.Logger.Warn("[BindChirpLink_Patch] Could not find CustomName(string) via reflection.");
                     return null;
                 }
 

@@ -14,8 +14,8 @@ namespace CustomChirps
 {
     public class Mod : IMod
     {
-        public static readonly string harmonyID = "CustomChirps";
-        public static ILog log = LogManager.GetLogger($"{nameof(CustomChirps)}.{nameof(Mod)}").SetShowsErrorsInUI(false);
+        private const string HarmonyID = "CustomChirps";
+        public static readonly ILog Logger = LogManager.GetLogger($"{nameof(CustomChirps)}.{nameof(Mod)}").SetShowsErrorsInUI(false);
 
         // Provide these later when your assets load:
         public static PrefabBase OtherModChirperAccountPrefab;
@@ -23,10 +23,10 @@ namespace CustomChirps
 
         public void OnLoad(UpdateSystem updateSystem)
         {
-            log.Info(nameof(OnLoad));
+            Logger.Info(nameof(OnLoad));
 
             if (GameManager.instance.modManager.TryGetExecutableAsset(this, out var asset))
-                log.Info($"Current mod asset at {asset.path}");
+                Logger.Info($"Current mod asset at {asset.path}");
 
             // Make our ECS systems run during the game simulation loop
             updateSystem.UpdateAt<Systems.CustomChirpApiSystem>(SystemUpdatePhase.GameSimulation);
@@ -34,21 +34,21 @@ namespace CustomChirps
             //updateSystem.UpdateAt<CustomChirps.Systems.CustomChirpTestSystem>(SystemUpdatePhase.GameSimulation);
 
 
-            var harmony = new Harmony(harmonyID);
+            var harmony = new Harmony(HarmonyID);
             // Harmony.DEBUG = true;
             harmony.PatchAll(typeof(Mod).Assembly);
 
 
             var patchedMethods = harmony.GetPatchedMethods().ToArray();
-            log.Info($"Plugin {harmonyID} made patches! Patched methods: " + patchedMethods.Length);
+            Logger.Info($"Plugin {HarmonyID} made patches! Patched methods: " + patchedMethods.Length);
             foreach (var patchedMethod in patchedMethods)
-                log.Info($"Patched: {patchedMethod.DeclaringType?.FullName}.{patchedMethod.Name}");
+                Logger.Info($"Patched: {patchedMethod.DeclaringType?.FullName}.{patchedMethod.Name}");
 
         }
 
         public void OnDispose()
         {
-            log.Info(nameof(OnDispose));
+            Logger.Info(nameof(OnDispose));
         }
     }
 }

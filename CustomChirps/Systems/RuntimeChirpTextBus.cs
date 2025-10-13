@@ -46,7 +46,7 @@ public static class RuntimeChirpTextBus
     {
         if (prefab == Entity.Null) return;
 
-        ulong ticket = _nextTicket++;
+        var ticket = _nextTicket++;
 
         var item = new PendingItem
         {
@@ -124,8 +124,8 @@ public static class RuntimeChirpTextBus
         out ChirpPayload payload)
     {
         PendingItem bestItem = null;
-        int bestScore = -1;
-        ulong bestTicket = ulong.MaxValue;
+        var bestScore = -1;
+        var bestTicket = ulong.MaxValue;
 
         var candidates = new List<PendingItem>(16);
 
@@ -138,24 +138,22 @@ public static class RuntimeChirpTextBus
         {
             if (kvp.Key == instanceChirpPrefab) continue;
 
-            if (em.HasBuffer<Game.Prefabs.TriggerChirpData>(kvp.Key))
+            if (!em.HasBuffer<Game.Prefabs.TriggerChirpData>(kvp.Key)) continue;
+            var buf = em.GetBuffer<Game.Prefabs.TriggerChirpData>(kvp.Key, true);
+            var hasVariant = false;
+
+            for (var k = 0; k < buf.Length; k++)
             {
-                var buf = em.GetBuffer<Game.Prefabs.TriggerChirpData>(kvp.Key, true);
-                bool hasVariant = false;
-
-                for (int k = 0; k < buf.Length; k++)
+                if (buf[k].m_Chirp == instanceChirpPrefab)
                 {
-                    if (buf[k].m_Chirp == instanceChirpPrefab)
-                    {
-                        hasVariant = true;
-                        break;
-                    }
+                    hasVariant = true;
+                    break;
                 }
+            }
 
-                if (hasVariant)
-                {
-                    candidates.AddRange(kvp.Value);
-                }
+            if (hasVariant)
+            {
+                candidates.AddRange(kvp.Value);
             }
         }
 
@@ -198,12 +196,10 @@ public static class RuntimeChirpTextBus
                 PendingByTarget.Remove(item.Payload.Target);
         }
 
-        if (PendingByPrefab.TryGetValue(item.Prefab, out var prefabSet))
-        {
-            prefabSet.Remove(item);
-            if (prefabSet.Count == 0)
-                PendingByPrefab.Remove(item.Prefab);
-        }
+        if (!PendingByPrefab.TryGetValue(item.Prefab, out var prefabSet)) return;
+        prefabSet.Remove(item);
+        if (prefabSet.Count == 0)
+            PendingByPrefab.Remove(item.Prefab);
     }
 
     public static void RememberAttached(Entity instance, in ChirpPayload payload)

@@ -45,7 +45,7 @@ public enum DepartmentAccount
 public sealed partial class CustomChirpApiSystem : GameSystemBase
 {
     private static CustomChirpApiSystem? _instance;
-    private static readonly ILog LOG = Mod.log;
+    private static readonly ILog LOG = Mod.Logger;
 
     private Entity _chirpPrefabEntity;
     private bool _didInit;
