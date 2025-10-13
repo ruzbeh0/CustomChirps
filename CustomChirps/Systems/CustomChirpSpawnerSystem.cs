@@ -11,8 +11,6 @@ using Unity.Mathematics;
 
 namespace CustomChirps.Systems
 {
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
-    [UpdateAfter(typeof(CreateChirpSystem))]
     public partial class CustomChirpSpawnerSystem : GameSystemBase
     {
         private EntityQuery _newChirps;

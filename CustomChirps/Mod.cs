@@ -1,19 +1,14 @@
-﻿// Mod.cs  (only the middle changed; rest is your file)
-using Colossal.IO.AssetDatabase;
-using Colossal.Logging;
+﻿using Colossal.Logging;
 
 using Game;
 using Game.Modding;
 using Game.Prefabs;
 using Game.SceneFlow;
+using Game.Triggers;
 
 using HarmonyLib;
 
-using System;
 using System.Linq;
-using System.Reflection;
-
-using Unity.Entities;
 
 namespace CustomChirps
 {
@@ -35,7 +30,7 @@ namespace CustomChirps
 
             // Make our ECS systems run during the game simulation loop
             updateSystem.UpdateAt<Systems.CustomChirpApiSystem>(SystemUpdatePhase.GameSimulation);
-            updateSystem.UpdateAt<Systems.CustomChirpSpawnerSystem>(SystemUpdatePhase.GameSimulation);
+            updateSystem.UpdateAfter<Systems.CustomChirpSpawnerSystem, CreateChirpSystem>(SystemUpdatePhase.ModificationEnd);
             //updateSystem.UpdateAt<CustomChirps.Systems.CustomChirpTestSystem>(SystemUpdatePhase.GameSimulation);
 
 
