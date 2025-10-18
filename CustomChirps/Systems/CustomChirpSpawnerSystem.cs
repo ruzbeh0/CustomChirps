@@ -5,8 +5,6 @@ using Game.Prefabs;
 using Game.Triggers;
 using Unity.Collections;
 using Unity.Entities;
-using Unity.Mathematics;
-using Unity.Burst;
 
 namespace CustomChirps.Systems
 {
@@ -25,7 +23,6 @@ namespace CustomChirps.Systems
                 .WithNone<ModChirpText>()
                 .Build(EntityManager);
 
-            // seed RNG (must be non-zero)
             uint seed = (uint)System.Environment.TickCount;
             if (seed == 0) seed = 1;
             _rng = new Unity.Mathematics.Random(seed);
@@ -34,88 +31,69 @@ namespace CustomChirps.Systems
         protected override void OnUpdate()
         {
             var em = EntityManager;
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            var allowPct = 100; // keep vanilla when no payload matched
 
             using var entities = _newChirps.ToEntityArray(Allocator.Temp);
-            using var prefabRefs = _newChirps.ToComponentDataArray<PrefabRef>(Allocator.Temp);
-            using var chirps = _newChirps.ToComponentDataArray<Game.Triggers.Chirp>(Allocator.Temp);
-            if (entities.Length == 0) return;
-
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
-            int allowPct = 100; // 0..100 from settings UI
-            allowPct = math.clamp(allowPct, 0, 100);
-
-            for (int i = 0; i < entities.Length; i++)
+            for (int idx = 0; idx < entities.Length; idx++)
             {
-                var e = entities[i];
-                var prefab = prefabRefs[i].m_Prefab;
-                if (prefab == Entity.Null) continue;
+                var e = entities[idx];
+                if (!em.Exists(e)) continue;
 
-                var current = chirps[i];
-                var actualSender = current.m_Sender;
+                var current = em.GetComponentData<Game.Triggers.Chirp>(e);
+                var prefab = em.GetComponentData<PrefabRef>(e).m_Prefab;
 
-                // Discover ANY target from the ChirpEntity buffer (no longer Building-only)
-                Entity actualTarget = Entity.Null;
-                if (em.HasBuffer<ChirpEntity>(e))
+                // Try deterministic marker first
+                ChirpPayload payload;
+                bool matched = RuntimeChirpTextBus.TryConsumeByMarker(em, e, out payload);
+
+                // If not, fall back to old matching (target → variant → prefab)
+                if (!matched)
                 {
-                    var links = em.GetBuffer<ChirpEntity>(e, true);
-                    for (int k = 0; k < links.Length; k++)
+                    Entity actualSender = current.m_Sender;
+                    Entity actualTarget = Entity.Null;
+
+                    if (em.HasBuffer<ChirpEntity>(e))
                     {
-                        var cand = links[k].m_Entity;
-                        if (cand != Entity.Null)
+                        var links = em.GetBuffer<ChirpEntity>(e, true);
+                        for (int k = 0; k < links.Length; k++)
                         {
-                            actualTarget = cand;
-                            break;
+                            var cand = links[k].m_Entity;
+                            if (cand != Entity.Null) { actualTarget = cand; break; }
                         }
                     }
-                }
 
-                // Try to match our payload (target-first, then variant-aware, then prefab-only)
-                ChirpPayload payload;
-                bool matched =
-                    RuntimeChirpTextBus.TryDequeueForTarget(actualTarget, out payload) ||
-                    RuntimeChirpTextBus.TryDequeueBestMatchConsideringVariants(em, prefab, actualSender, actualTarget, out payload) ||
-                    RuntimeChirpTextBus.TryDequeueForPrefab(prefab, out payload);
+                    matched =
+                        RuntimeChirpTextBus.TryDequeueForTarget(actualTarget, out payload) ||
+                        RuntimeChirpTextBus.TryDequeueBestMatchConsideringVariants(em, prefab, actualSender, actualTarget, out payload) ||
+                        RuntimeChirpTextBus.TryDequeueForPrefab(prefab, out payload);
+                }
 
                 if (!matched)
                 {
-                    // ---- VANILLA FILTER HERE ----
-                    if (allowPct <= 0)
-                    {
-                        ecb.DestroyEntity(e);
-                        continue;
-                    }
+                    if (allowPct <= 0) { ecb.DestroyEntity(e); continue; }
                     if (allowPct < 100)
                     {
-                        // draw 0..99; keep if < allowPct
                         int roll = _rng.NextInt(100);
-                        if (roll >= allowPct)
-                        {
-                            ecb.DestroyEntity(e);
-                            continue;
-                        }
+                        if (roll >= allowPct) { ecb.DestroyEntity(e); continue; }
                     }
-
-                    // keep vanilla as-is
-                    continue;
+                    continue; // keep vanilla as-is
                 }
 
                 // Attach our text key
                 ecb.AddComponent(e, new ModChirpText { Key = payload.Key });
 
-                // Optionally force sender (icon) to requested account
-                if (payload.Sender != Entity.Null && actualSender != payload.Sender)
+                // Force sender (icon) if requested
+                if (payload.Sender != Entity.Null && current.m_Sender != payload.Sender)
                 {
                     current.m_Sender = payload.Sender;
                     ecb.SetComponent(e, current);
                 }
 
-                // Optionally stamp override label component if your UI patch uses it
+                // Stamp override label if present
                 if (payload.OverrideSenderName.Length > 0)
                 {
-                    ecb.AddComponent(e, new CustomChirps.Components.OverrideSender
-                    {
-                        Name = payload.OverrideSenderName
-                    });
+                    ecb.AddComponent(e, new OverrideSender { Name = payload.OverrideSenderName });
                 }
 
                 RuntimeChirpTextBus.RememberAttached(e, payload);

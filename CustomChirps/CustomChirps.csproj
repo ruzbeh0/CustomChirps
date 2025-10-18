@@ -4,7 +4,7 @@
 		<OutputType>Library</OutputType>
 		<TargetFramework>net472</TargetFramework>
 		<Configurations>Debug;Release</Configurations>
-		<LangVersion>12.0</LangVersion>
+		<LangVersion>9.0</LangVersion>
 
 
 		<!--The file where mod information which is required for publishing mod on PDX mods are stored-->
@@ -19,6 +19,8 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<Reference Include="Colossal.Mathematics">
+		</Reference>
 		<Reference Include="Game">
 			<Private>false</Private>
 		</Reference>
@@ -79,10 +81,6 @@
 
 	<ItemGroup>
 	  <PackageReference Include="Lib.Harmony" Version="2.2.2" />
-	</ItemGroup>
-
-	<ItemGroup>
-	  <Folder Include="Prefabs\" />
 	</ItemGroup>
 
 </Project>

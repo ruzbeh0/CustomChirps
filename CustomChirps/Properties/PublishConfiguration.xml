@@ -36,7 +36,7 @@ Currently, it doesn't have any option to configure chirps, but that will be adde
 	</ChangeLog>-->
 	<!--External link, can be set multiple times. supported types are "discord", "github", "youtube", "twitch", "x", "paypal", "patreon", "buymeacoffee", "kofi", "crowdin", "gitlab", "gofundme"-->
 	<ExternalLink Type="github" Url="https://github.com/ruzbeh0/Time2Work" />
-	<ExternalLink Type="discord" Url="https://discord.com/channels/1024242828114673724/1224077120641302558" />
+	<ExternalLink Type="discord" Url="https://discord.com/channels/1024242828114673724/1425951622844125275" />
 	<ExternalLink Type="paypal" Url="https://www.paypal.com/paypalme/ruzbeh0" />
 	<ExternalLink Type="kofi" Url="https://ko-fi.com/ruzbeh0" />
 </Publish>

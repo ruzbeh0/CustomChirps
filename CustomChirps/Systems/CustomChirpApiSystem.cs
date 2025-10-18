@@ -2,21 +2,22 @@
 using Colossal;
 using Colossal.Localization;
 using Colossal.Logging;
-using CustomChirps.Systems; // RuntimeChirpTextBus & ChirpPayload live here
+
 using Game.Prefabs;
 using Game.SceneFlow;
 using Game.Triggers;
+
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 
 namespace CustomChirps.Systems
 {
-    /// <summary>
-    /// Departments available as "sender accounts" (icon source).
-    /// </summary>
     public enum DepartmentAccount
     {
         Electricity,
@@ -40,54 +41,56 @@ namespace CustomChirps.Systems
     }
 
     /// <summary>
-    /// Minimal public API for other mods to post Chirper messages.
-    /// - Department selects the icon (underlying Chirper account).
-    /// - customSenderName (if provided) is what the UI shows as the sender label (your patches apply it).
-    /// - If a non-null target entity is provided and no {LINK_*} token exists, "{LINK_1}" is appended automatically.
+    /// Public API for other mods to post Chirper messages.
+    /// - Thread-safe: PostChirp can be called from any thread.
+    /// - Work is drained on the main thread during OnUpdate.
+    /// - Uses a deferred writer job to enqueue into CreateChirpSystem without blocking.
     /// </summary>
     public sealed partial class CustomChirpApiSystem : SystemBase
     {
         private static CustomChirpApiSystem _instance;
         private static readonly ILog _log = Mod.log;
 
-        // Fallback generic chirp prefab (any with ChirpData) if none explicitly configured
+        // ======= Thread-safe request queue (producer: any thread, consumer: main thread) =======
+        private struct PendingRequest
+        {
+            public string Text;
+            public DepartmentAccount Dept;
+            public Entity Target;
+            public string CustomSenderName;
+        }
+
+        private static readonly ConcurrentQueue<PendingRequest> s_requests = new ConcurrentQueue<PendingRequest>();
+
+        // Drain cap per frame to avoid long stalls if a flood happens.
+        private const int MaxRequestsPerFrame = 512;
+
+        // ======= Runtime state (main thread only) =======
         private Entity _chirpPrefabEntity;
         private bool _didInit;
 
-        // Runtime localization hot-source
         private LocalizationManager _locMgr;
         private RuntimeLocaleSource _runtimeLocale;
 
-        // ----------------------- Public API -----------------------
-
-        /// <summary>
-        /// Post a chirp selecting department (icon) and a target ENTITY (any ECS entity).
-        /// If a target is provided and "{LINK_*}" is not present in the text, "{LINK_1}" is appended automatically.
-        /// </summary>
-        public static void PostChirp(
-            string text,
-            DepartmentAccount department,
-            Entity targetEntity,
-            string customSenderName = null)
+        // ======= Public API (thread-safe) =======
+        public static void PostChirp(string text, DepartmentAccount dept, Entity targetEntity, string customSenderName = null)
         {
-            var inst = _instance;
-            if (inst == null)
+            // Only enqueue immutable data here; do not touch Unity/ECS state.
+            s_requests.Enqueue(new PendingRequest
             {
-                _log.Warn("[CustomChirps] API system not ready.");
-                return;
-            }
-
-            inst.EnqueueChirp(text, department, targetEntity, customSenderName);
+                Text = text,
+                Dept = dept,
+                Target = targetEntity,
+                CustomSenderName = customSenderName
+            });
         }
 
-        // ----------------------- Internals ------------------------
-
+        // ======= System lifecycle =======
         protected override void OnCreate()
         {
             base.OnCreate();
             _instance = this;
 
-            // Install a runtime locale source so we can add keys at runtime
             try
             {
                 _locMgr = GameManager.instance.localizationManager;
@@ -108,42 +111,58 @@ namespace CustomChirps.Systems
 
         protected override void OnDestroy()
         {
-            if (ReferenceEquals(_instance, this))
-                _instance = null;
+            if (ReferenceEquals(_instance, this)) _instance = null;
             base.OnDestroy();
         }
 
-        protected override void OnUpdate() { /* no per-frame work needed */ }
+        protected override void OnUpdate()
+        {
+            EnsureInit();
+            if (!_didInit) return;
+
+            // Drain queued requests on the main thread
+            int processed = 0;
+            while (processed < MaxRequestsPerFrame && s_requests.TryDequeue(out var req))
+            {
+                try
+                {
+                    ProcessRequestOnMainThread(req);
+                }
+                catch (Exception ex)
+                {
+                    _log.Error($"[CustomChirps] Failed to process chirp request: {ex}");
+                }
+                processed++;
+            }
+        }
 
         private void EnsureInit()
         {
             if (_didInit) return;
 
-            // Auto-discover a generic chirp prefab if none configured
             if (_chirpPrefabEntity == Entity.Null)
             {
                 try
                 {
-                    using var chirpPfs = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<ChirpData>())
-                                                      .ToEntityArray(Allocator.Temp);
+                    using var chirpPfs = EntityManager
+                        .CreateEntityQuery(ComponentType.ReadOnly<ChirpData>())
+                        .ToEntityArray(Allocator.Temp);
                     if (chirpPfs.Length > 0) _chirpPrefabEntity = chirpPfs[0];
                 }
                 catch { /* ignore */ }
             }
 
-            _log.Info($"[CustomChirps] Api init — chirpPf={(_chirpPrefabEntity != Entity.Null)}");
-            _didInit = true;
+            _didInit = _chirpPrefabEntity != Entity.Null;
+            _log.Info($"[CustomChirps] Api init — chirpPf={_didInit}");
         }
 
-        private void EnqueueChirp(string text, DepartmentAccount dept, Entity anyTarget, string customSenderName)
+        // ======= Main-thread processing =======
+        private void ProcessRequestOnMainThread(in PendingRequest req)
         {
-            EnsureInit();
-
-            // Resolve the department account (icon source)
-            var senderAccount = ResolveDepartment(dept);
+            var senderAccount = ResolveDepartment(req.Dept);
             if (senderAccount == Entity.Null)
             {
-                _log.Warn($"[CustomChirps] Department '{dept}' account not present in this save.");
+                _log.Warn($"[CustomChirps] Department '{req.Dept}' account not present in this save.");
                 return;
             }
 
@@ -153,106 +172,90 @@ namespace CustomChirps.Systems
                 return;
             }
 
-            // Auto-insert {LINK_1} if a target is supplied and the text has no link token
-            string finalText = text ?? string.Empty;
-            if (anyTarget != Entity.Null &&
-                finalText.IndexOf("{LINK_", StringComparison.Ordinal) < 0)
-            {
-                finalText = finalText + " {LINK_1}";
-            }
+            // Ensure there is a link placeholder if a target exists.
+            string finalText = req.Text ?? string.Empty;
+            if (req.Target != Entity.Null && finalText.IndexOf("{LINK_", StringComparison.Ordinal) < 0)
+                finalText += " {LINK_1}";
 
-            // Create a runtime localization key
+            // Create runtime localization key (unique per request)
             var key = $"customchirps:{DateTime.UtcNow.Ticks:x}";
             _runtimeLocale?.AddOrUpdate(key, string.IsNullOrEmpty(finalText) ? "(empty)" : finalText);
             try { _locMgr?.ReloadActiveLocale(); } catch { /* ignore */ }
 
-            // Hand payload to our spawner via the bus
+            // Build payload and create a marker that will later be swapped to the real target
             var payload = new ChirpPayload
             {
                 Key = new FixedString512Bytes(key),
-                Sender = senderAccount,                                // icon source
-                Target = anyTarget,                                     // clickable link (via CreateChirpSystem)
-                OverrideSenderName = new FixedString128Bytes(customSenderName ?? "")// visible label (your UI patch uses it)
+                Sender = senderAccount,
+                Target = req.Target,
+                OverrideSenderName = new FixedString128Bytes(req.CustomSenderName ?? "")
             };
-            RuntimeChirpTextBus.EnqueuePending(_chirpPrefabEntity, in payload);
 
-            // Let the vanilla create path instantiate the chirp + link buffer
-            var create = World.GetExistingSystemManaged<CreateChirpSystem>();
-            var queue = create.GetQueue(out var deps);
-            queue.Enqueue(new ChirpCreationData
+            var em = EntityManager;
+            var marker = RuntimeChirpTextBus.CreateMarker(em, req.Target, out var token);
+            RuntimeChirpTextBus.AddPendingByToken(token, in payload);
+
+            // Prepare the creation data for the vanilla chirp queue
+            var data = new ChirpCreationData
             {
                 m_TriggerPrefab = _chirpPrefabEntity,
                 m_Sender = senderAccount,
-                m_Target = anyTarget
-            });
-            create.AddQueueWriter(deps);
-
-            _log.Info($"[CustomChirps] Queued chirp (dept={dept}, sender={senderAccount}, target={(anyTarget == Entity.Null ? "None" : anyTarget.ToString())}).");
-        }
-
-        // Try to find an instance entity for the given prefab by matching PrefabRef.m_Prefab
-        private bool TryResolveEntityFromPrefab(PrefabBase prefab, out Entity entity)
-        {
-            entity = Entity.Null;
-            if (prefab == null) return false;
-
-            var wanted = Util.PrefabLookup.GetPrefabEntity(World, prefab);
-            if (wanted == Entity.Null) return false;
-
-            var em = EntityManager;
-
-            using var q = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<PrefabRef>()
-                .Build(em);
-
-            using var chunks = q.ToArchetypeChunkArray(Allocator.Temp);
-            var typePrefabRef = GetComponentTypeHandle<PrefabRef>(true);
-            var typeEntity = GetEntityTypeHandle();
-
-            for (int c = 0; c < chunks.Length; c++)
-            {
-                var chunk = chunks[c];
-                var prefs = chunk.GetNativeArray(typePrefabRef);
-                var ents = chunk.GetNativeArray(typeEntity);
-
-                for (int i = 0; i < ents.Length; i++)
-                {
-                    if (prefs[i].m_Prefab == wanted)
-                    {
-                        entity = ents[i];
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        // ---- Department resolver ----
-
-        private static readonly Dictionary<DepartmentAccount, string> s_DepartmentPrefabNames =
-            new()
-            {
-                { DepartmentAccount.Electricity,                    "ElectricityChirperAccount" },
-                { DepartmentAccount.FireRescue,                     "FireRescueChirperAccount" },
-                { DepartmentAccount.Roads,                          "RoadChirperAccount" },
-                { DepartmentAccount.Water,                          "WaterChirperAccount" },
-                { DepartmentAccount.Communications,                 "CommunicationsChirperAccount" },
-                { DepartmentAccount.Police,                         "PoliceChirperAccount" },
-                { DepartmentAccount.PropertyAssessmentOffice,       "PropertyAssessmentOfficeAccount" },
-                { DepartmentAccount.Post,                           "PostChirperAccount" },
-                { DepartmentAccount.BusinessNews,                   "BusinessNewsChirperAccount" },
-                { DepartmentAccount.CensusBureau,                   "CensusBureauChirperAccount" },
-                { DepartmentAccount.ParkAndRec,                     "ParkAndRecChirperAccount" },
-                { DepartmentAccount.EnvironmentalProtectionAgency,  "EnvironmentalProtectionAgencyChirperAccount" },
-                { DepartmentAccount.Healthcare,                     "HealthcareChirperAccount" },
-                { DepartmentAccount.LivingStandardsAssociation,     "LivingStandardsAssociationChirperAccount" },
-                { DepartmentAccount.Garbage,                        "GarbageChirperAccount" },
-                { DepartmentAccount.TourismBoard,                   "TourismBoardChirperAccount" },
-                { DepartmentAccount.Transportation,                 "TransportationChirperAccount" },
-                { DepartmentAccount.Education,                      "EducationChirperAccount" },
+                m_Target = marker
             };
 
-        /// <summary>Resolve department account entity present in the current save.</summary>
+            // Non-blocking: schedule a tiny job that enqueues AFTER existing writers
+            var create = World.GetExistingSystemManaged<CreateChirpSystem>();
+            var queue = create.GetQueue(out var deps);
+
+            var job = new EnqueueChirpJob
+            {
+                Writer = queue.AsParallelWriter(),
+                Data = data
+            };
+            var writerHandle = job.Schedule(deps);
+
+            // Inform CreateChirpSystem that we added a writer
+            create.AddQueueWriter(writerHandle);
+
+            var targetLabel = req.Target == Entity.Null ? "None" : req.Target.ToString();
+            _log.Info($"[CustomChirps] Queued chirp (dept={req.Dept}, sender={senderAccount}, target={targetLabel}) [deferred, main-thread].");
+        }
+
+        [BurstCompile] // optional; safe to keep even if Burst isn't available at runtime
+        private struct EnqueueChirpJob : IJob
+        {
+            public NativeQueue<ChirpCreationData>.ParallelWriter Writer;
+            public ChirpCreationData Data;
+
+            public void Execute()
+            {
+                Writer.Enqueue(Data);
+            }
+        }
+
+        // ======= Helpers =======
+        private static readonly Dictionary<DepartmentAccount, string> s_DepartmentPrefabNames = new()
+        {
+            { DepartmentAccount.Electricity,                   "ElectricityChirperAccount" },
+            { DepartmentAccount.FireRescue,                    "FireRescueChirperAccount" },
+            { DepartmentAccount.Roads,                         "RoadChirperAccount" },
+            { DepartmentAccount.Water,                         "WaterChirperAccount" },
+            { DepartmentAccount.Communications,                "CommunicationsChirperAccount" },
+            { DepartmentAccount.Police,                        "PoliceChirperAccount" },
+            { DepartmentAccount.PropertyAssessmentOffice,      "PropertyAssessmentOfficeAccount" },
+            { DepartmentAccount.Post,                          "PostChirperAccount" },
+            { DepartmentAccount.BusinessNews,                  "BusinessNewsChirperAccount" },
+            { DepartmentAccount.CensusBureau,                  "CensusBureauChirperAccount" },
+            { DepartmentAccount.ParkAndRec,                    "ParkAndRecChirperAccount" },
+            { DepartmentAccount.EnvironmentalProtectionAgency, "EnvironmentalProtectionAgencyChirperAccount" },
+            { DepartmentAccount.Healthcare,                    "HealthcareChirperAccount" },
+            { DepartmentAccount.LivingStandardsAssociation,    "LivingStandardsAssociationChirperAccount" },
+            { DepartmentAccount.Garbage,                       "GarbageChirperAccount" },
+            { DepartmentAccount.TourismBoard,                  "TourismBoardChirperAccount" },
+            { DepartmentAccount.Transportation,                "TransportationChirperAccount" },
+            { DepartmentAccount.Education,                     "EducationChirperAccount" },
+        };
+
         private static Entity ResolveDepartment(DepartmentAccount dept)
         {
             var world = World.DefaultGameObjectInjectionWorld;
@@ -282,8 +285,7 @@ namespace CustomChirps.Systems
             return Entity.Null;
         }
 
-        // --------------- Runtime locale source ----------------
-
+        // Minimal runtime locale source to avoid file IO; lives only in memory.
         private sealed class RuntimeLocaleSource : IDictionarySource
         {
             private readonly ConcurrentDictionary<string, string> _entries = new();
