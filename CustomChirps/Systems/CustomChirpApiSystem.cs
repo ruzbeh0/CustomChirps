@@ -2,16 +2,14 @@
 using Colossal;
 using Colossal.Localization;
 using Colossal.Logging;
-
+using CustomChirps.Utils; // I18NBridge + RuntimeLocalizationWindow
+using Game;
 using Game.Prefabs;
 using Game.SceneFlow;
 using Game.Triggers;
-
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-
-using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
@@ -41,12 +39,11 @@ namespace CustomChirps.Systems
     }
 
     /// <summary>
-    /// Public API for other mods to post Chirper messages.
-    /// - Thread-safe: PostChirp can be called from any thread.
-    /// - Work is drained on the main thread during OnUpdate.
-    /// - Uses a deferred writer job to enqueue into CreateChirpSystem without blocking.
+    /// Thread-safe chirp API with dual localization:
+    /// - I18NEverywhere (RuntimeLocalizationWindow) for mod ecosystem,
+    /// - Vanilla LocalizationManager proxy so Chirper UI resolves the message immediately.
     /// </summary>
-    public sealed partial class CustomChirpApiSystem : SystemBase
+    public sealed partial class CustomChirpApiSystem : GameSystemBase
     {
         private static CustomChirpApiSystem _instance;
         private static readonly ILog _log = Mod.log;
@@ -61,21 +58,25 @@ namespace CustomChirps.Systems
         }
 
         private static readonly ConcurrentQueue<PendingRequest> s_requests = new ConcurrentQueue<PendingRequest>();
-
-        // Drain cap per frame to avoid long stalls if a flood happens.
         private const int MaxRequestsPerFrame = 512;
 
         // ======= Runtime state (main thread only) =======
         private Entity _chirpPrefabEntity;
         private bool _didInit;
 
+        // I18N bridge & sliding window
+        private Dictionary<string, string> _i18nDict;                 // shared-or-private dictionary
+        private RuntimeLocalizationWindow _i18nWindow;
+        private bool _i18nEverywhereAvailable;
+
+        // Vanilla localization bridge (proxy over a private concurrent dict)
         private LocalizationManager _locMgr;
-        private RuntimeLocaleSource _runtimeLocale;
+        private RuntimeLocaleSourceProxy _vanillaSource;
+        private readonly ConcurrentDictionary<string, string> _vanillaDict = new ConcurrentDictionary<string, string>();
 
         // ======= Public API (thread-safe) =======
         public static void PostChirp(string text, DepartmentAccount dept, Entity targetEntity, string customSenderName = null)
         {
-            // Only enqueue immutable data here; do not touch Unity/ECS state.
             s_requests.Enqueue(new PendingRequest
             {
                 Text = text,
@@ -85,28 +86,41 @@ namespace CustomChirps.Systems
             });
         }
 
-        // ======= System lifecycle =======
         protected override void OnCreate()
         {
             base.OnCreate();
             _instance = this;
 
+            // Try to attach to I18NEverywhere shared runtime dict; otherwise use a private one.
+            var shared = I18NBridge.GetDictionary();
+            if (shared != null)
+            {
+                _i18nDict = shared;
+                _i18nEverywhereAvailable = true;
+                _log.Info("[CustomChirps] Connected to I18NEverywhere runtime dictionary.");
+            }
+            else
+            {
+                _i18nDict = new Dictionary<string, string>(StringComparer.Ordinal);
+                _i18nEverywhereAvailable = false;
+                _log.Warn("[CustomChirps] I18NEverywhere not found. Using a private runtime dictionary.");
+            }
+
+            _i18nWindow = new RuntimeLocalizationWindow(_i18nDict);
+
+            // Vanilla localization manager + proxy source
             try
             {
                 _locMgr = GameManager.instance.localizationManager;
-                _runtimeLocale = RuntimeLocaleSource.InstallIfNeeded(_locMgr, "en-US");
-                _log.Info("[CustomChirps] Runtime locale source installed.");
+                _vanillaSource = new RuntimeLocaleSourceProxy(_vanillaDict);
+                // Register proxy once (english is safest default; the manager will include it for the active locale)
+                _locMgr.AddSource("en-US", _vanillaSource);
+                _log.Info("[CustomChirps] Vanilla localization proxy installed.");
             }
             catch (Exception ex)
             {
-                _log.Error($"[CustomChirps] Failed to install runtime locale source: {ex}");
+                _log.Error($"[CustomChirps] Failed to set up vanilla localization proxy: {ex}");
             }
-        }
-
-        protected override void OnStartRunning()
-        {
-            base.OnStartRunning();
-            EnsureInit();
         }
 
         protected override void OnDestroy()
@@ -153,7 +167,7 @@ namespace CustomChirps.Systems
             }
 
             _didInit = _chirpPrefabEntity != Entity.Null;
-            _log.Info($"[CustomChirps] Api init — chirpPf={_didInit}");
+            _log.Info($"[CustomChirps] Api init — chirpPf={_didInit}, i18n={(_i18nEverywhereAvailable ? "I18NEverywhere" : "private")}");
         }
 
         // ======= Main-thread processing =======
@@ -177,12 +191,17 @@ namespace CustomChirps.Systems
             if (req.Target != Entity.Null && finalText.IndexOf("{LINK_", StringComparison.Ordinal) < 0)
                 finalText += " {LINK_1}";
 
-            // Create runtime localization key (unique per request)
+            // Unique runtime key
             var key = $"customchirps:{DateTime.UtcNow.Ticks:x}";
-            _runtimeLocale?.AddOrUpdate(key, string.IsNullOrEmpty(finalText) ? "(empty)" : finalText);
-            try { _locMgr?.ReloadActiveLocale(); } catch { /* ignore */ }
 
-            // Build payload and create a marker that will later be swapped to the real target
+            // 1) I18N (runtime dict with sliding window)
+            _i18nWindow.AddWithWindowManagement(key, string.IsNullOrEmpty(finalText) ? "(empty)" : finalText);
+
+            // 2) Vanilla localization proxy (so Chirper UI resolves the message)
+            _vanillaDict[key] = string.IsNullOrEmpty(finalText) ? "(empty)" : finalText;
+            try { _locMgr?.ReloadActiveLocale(); } catch { /* ignore; some environments may defer */ }
+
+            // Build payload & marker (later swapped to real target)
             var payload = new ChirpPayload
             {
                 Key = new FixedString512Bytes(key),
@@ -195,7 +214,7 @@ namespace CustomChirps.Systems
             var marker = RuntimeChirpTextBus.CreateMarker(em, req.Target, out var token);
             RuntimeChirpTextBus.AddPendingByToken(token, in payload);
 
-            // Prepare the creation data for the vanilla chirp queue
+            // Prepare creation data for vanilla chirp queue
             var data = new ChirpCreationData
             {
                 m_TriggerPrefab = _chirpPrefabEntity,
@@ -203,7 +222,7 @@ namespace CustomChirps.Systems
                 m_Target = marker
             };
 
-            // Non-blocking: schedule a tiny job that enqueues AFTER existing writers
+            // Non-blocking enqueue after existing writers
             var create = World.GetExistingSystemManaged<CreateChirpSystem>();
             var queue = create.GetQueue(out var deps);
 
@@ -213,15 +232,12 @@ namespace CustomChirps.Systems
                 Data = data
             };
             var writerHandle = job.Schedule(deps);
-
-            // Inform CreateChirpSystem that we added a writer
             create.AddQueueWriter(writerHandle);
 
             var targetLabel = req.Target == Entity.Null ? "None" : req.Target.ToString();
-            _log.Info($"[CustomChirps] Queued chirp (dept={req.Dept}, sender={senderAccount}, target={targetLabel}) [deferred, main-thread].");
+            _log.Info($"[CustomChirps] Queued chirp (dept={req.Dept}, sender={senderAccount}, target={targetLabel}) [deferred, dual-i18n].");
         }
 
-        [BurstCompile] // optional; safe to keep even if Burst isn't available at runtime
         private struct EnqueueChirpJob : IJob
         {
             public NativeQueue<ChirpCreationData>.ParallelWriter Writer;
@@ -285,28 +301,29 @@ namespace CustomChirps.Systems
             return Entity.Null;
         }
 
-        // Minimal runtime locale source to avoid file IO; lives only in memory.
-        private sealed class RuntimeLocaleSource : IDictionarySource
+        /// <summary>
+        /// Minimal proxy source that exposes an in-memory dictionary to the vanilla LocalizationManager.
+        /// </summary>
+        private sealed class RuntimeLocaleSourceProxy : IDictionarySource
         {
-            private readonly ConcurrentDictionary<string, string> _entries = new();
+            private readonly ConcurrentDictionary<string, string> _src;
 
-            private RuntimeLocaleSource() { }
+            public RuntimeLocaleSourceProxy(ConcurrentDictionary<string, string> src)
+            {
+                _src = src ?? throw new ArgumentNullException(nameof(src));
+            }
 
             public IEnumerable<KeyValuePair<string, string>> ReadEntries(
                 IList<IDictionaryEntryError> errors,
-                Dictionary<string, int> indexCounts) => _entries;
+                Dictionary<string, int> indexCounts)
+            {
+                // Snapshot the dictionary at call time.
+                return _src;
+            }
 
             public void Unload() { }
-            public override string ToString() => "CustomChirps.RuntimeLocale";
 
-            public void AddOrUpdate(string key, string value) => _entries[key] = value;
-
-            public static RuntimeLocaleSource InstallIfNeeded(LocalizationManager mgr, string localeId)
-            {
-                var src = new RuntimeLocaleSource();
-                mgr.AddSource(localeId, src);
-                return src;
-            }
+            public override string ToString() => "CustomChirps.RuntimeLocaleProxy";
         }
     }
 }

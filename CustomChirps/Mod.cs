@@ -6,7 +6,7 @@ using Game;
 using Game.Modding;
 using Game.Prefabs;
 using Game.SceneFlow;
-
+using Game.Triggers;
 using HarmonyLib;
 
 using System;
@@ -36,6 +36,7 @@ namespace CustomChirps
             // Make our ECS systems run during the game simulation loop
             updateSystem.UpdateAt<Systems.CustomChirpApiSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateAt<Systems.CustomChirpSpawnerSystem>(SystemUpdatePhase.GameSimulation);
+            updateSystem.UpdateAfter<Systems.CustomChirpSpawnerSystem, CreateChirpSystem>(SystemUpdatePhase.GameSimulation);
 
 
             var harmony = new Harmony(harmonyID);

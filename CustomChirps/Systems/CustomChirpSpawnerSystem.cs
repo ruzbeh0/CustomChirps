@@ -1,6 +1,7 @@
 ﻿// Systems/CustomChirpSpawnerSystem.cs
 using CustomChirps.Components;
 using CustomChirps.Systems;
+using Game;
 using Game.Prefabs;
 using Game.Triggers;
 using Unity.Collections;
@@ -8,9 +9,7 @@ using Unity.Entities;
 
 namespace CustomChirps.Systems
 {
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
-    [UpdateAfter(typeof(CreateChirpSystem))]
-    public partial class CustomChirpSpawnerSystem : SystemBase
+    public partial class CustomChirpSpawnerSystem : GameSystemBase
     {
         private EntityQuery _newChirps;
         private Unity.Mathematics.Random _rng;
