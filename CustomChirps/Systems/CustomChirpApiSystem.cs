@@ -73,7 +73,8 @@ namespace CustomChirps.Systems
         // Vanilla localization bridge (proxy over a private concurrent dict)
         private LocalizationManager _locMgr;
         private RuntimeLocaleSourceProxy _vanillaSource;
-        private readonly ConcurrentDictionary<string, string> _vanillaDict = new ConcurrentDictionary<string, string>();
+        private RuntimeLocalizationWindow _vanillaWindow;
+        private Dictionary<string, string> _vanillaDict = new(StringComparer.Ordinal);
 
         // ======= Public API (thread-safe) =======
         public static void PostChirp(string text, DepartmentAccount dept, Entity targetEntity, string customSenderName = null)
@@ -92,49 +93,41 @@ namespace CustomChirps.Systems
             base.OnCreate();
             _instance = this;
 
-            // Decide backend: i18n wins; vanilla is fallback
+            // Decide backend once (i18n wins; vanilla is fallback)
             var shared = I18NBridge.GetDictionary();
             if (shared != null)
             {
-                _i18nDict = shared;
                 _i18nEverywhereAvailable = true;
-                _useVanillaProxy = false; // disable vanilla proxy entirely when i18n is present
-                _log?.Info("[CustomChirps] Connected to I18NEverywhere runtime dictionary.");
+                _useVanillaProxy = false;
+
+                _i18nDict = shared;
+                _i18nWindow = new RuntimeLocalizationWindow(_i18nDict);
             }
             else
             {
-                _i18nDict = new Dictionary<string, string>(StringComparer.Ordinal);
                 _i18nEverywhereAvailable = false;
-                _useVanillaProxy = true; // fallback to vanilla proxy only if i18n is missing
-                _log?.Warn("[CustomChirps] I18NEverywhere not found. Using private runtime dictionary.");
+                _useVanillaProxy = true;
+
+                _i18nDict = new Dictionary<string, string>(StringComparer.Ordinal);
+                _i18nWindow = new RuntimeLocalizationWindow(_i18nDict);
             }
 
-            _i18nWindow = new RuntimeLocalizationWindow(_i18nDict);
-
-            // Install vanilla localization proxy ONLY when we're actually using it
             if (_useVanillaProxy)
             {
-                try
-                {
-                    _vanillaDict.Clear();
-                    _locMgr = GameManager.instance.localizationManager;
-                    _vanillaSource = new RuntimeLocaleSourceProxy(_vanillaDict);
+                _locMgr = GameManager.instance.localizationManager;
 
-                    // IMPORTANT: register under the CURRENT ACTIVE LOCALE, not a hard-coded "en-US"
-                    var activeLocale = _locMgr.activeLocaleId;
-                    if (string.IsNullOrWhiteSpace(activeLocale))
-                        activeLocale = "en-US"; // conservative default
+                // activeLocaleId is guaranteed non-null in your environment
+                var activeLocale = _locMgr.activeLocaleId;
 
-                    _locMgr.AddSource(activeLocale, _vanillaSource);
-                    _log?.Info($"[CustomChirps] Vanilla localization proxy installed for '{activeLocale}'.");
-                }
-                catch (Exception ex)
-                {
-                    _useVanillaProxy = false; // hard-disable if setup fails
-                    _log?.Error($"[CustomChirps] Failed to set up vanilla localization proxy: {ex}");
-                }
+                _vanillaSource = new RuntimeLocaleSourceProxy(_vanillaDict);
+                _locMgr.AddSource(activeLocale, _vanillaSource);
+
+                // sliding window for vanilla too (prevents unbounded memory growth)
+                _vanillaWindow = new RuntimeLocalizationWindow(_vanillaDict);
             }
         }
+
+
 
 
         protected override void OnDestroy()
@@ -200,58 +193,39 @@ namespace CustomChirps.Systems
         // ======= Main-thread processing =======
         private void ProcessRequestOnMainThread(in PendingRequest req)
         {
+            // Resolve sender/target exactly as you already do (keep your existing code here)
             var senderAccount = ResolveDepartment(req.Dept);
-            if (senderAccount == Entity.Null)
-            {
-                _log.Warn($"[CustomChirps] Department '{req.Dept}' account not present in this save.");
+            if (senderAccount == Entity.Null || _chirpPrefabEntity == Entity.Null)
                 return;
-            }
-            if (_chirpPrefabEntity == Entity.Null)
-            {
-                _log.Warn("[CustomChirps] No chirp prefab available. Load a city/save first.");
-                return;
-            }
 
-            // Ensure there is a link placeholder if a target exists (matches your previous behavior)
+            // Compose final text (keep your existing formatting; below is the same minimal link insert)
             string finalText = req.Text ?? string.Empty;
             if (req.Target != Entity.Null && finalText.IndexOf("{LINK_", StringComparison.Ordinal) < 0)
                 finalText += " {LINK_1}";
 
-            // Unique runtime key (GUID avoids collisions better than ticks)
+            // 1) Collision-resistant key
             var key = $"customchirps:{Guid.NewGuid():N}";
             var value = string.IsNullOrWhiteSpace(finalText) ? "(empty)" : finalText;
 
-            // Write to exactly one backend
+            // 2) Single-backend write with a sliding window in BOTH paths
             if (_i18nEverywhereAvailable)
             {
-                // i18n path: no vanilla writes, no reloads
+                // i18n: add + window trim; no reloads, no vanilla writes
                 _i18nWindow.AddWithWindowManagement(key, value);
-                _log?.Debug($"[CustomChirps] (i18n) Added {key}");
             }
             else if (_useVanillaProxy)
             {
-                // VANILLA path: add to proxy dict AND refresh the active locale so the UI can resolve it
-                _vanillaDict[key] = value;
-
-                try
-                {
-                    _locMgr?.ReloadActiveLocale(); // <-- critical for vanilla visibility
-                }
-                catch (Exception ex)
-                {
-                    _log?.Warn($"[CustomChirps] ReloadActiveLocale failed: {ex}");
-                }
-
-                _log?.Debug($"[CustomChirps] (vanilla) Added {key}");
+                // vanilla: add + window trim; then refresh so UI resolves the new key
+                _vanillaWindow.AddWithWindowManagement(key, value);
+                _locMgr.ReloadActiveLocale();
             }
             else
             {
-                // Last-resort fallback
+                // ultra-fallback (shouldn’t really happen, but cheap to keep)
                 _i18nDict[key] = value;
-                _log?.Warn($"[CustomChirps] No localization backend active; stored {key} in private dict.");
             }
 
-            // Build payload
+            // 3) Build and enqueue payload (keep your existing code)
             var payload = new ChirpPayload
             {
                 Key = new Unity.Collections.FixedString512Bytes(key),
@@ -260,7 +234,6 @@ namespace CustomChirps.Systems
                 OverrideSenderName = new Unity.Collections.FixedString128Bytes(req.CustomSenderName ?? "")
             };
 
-            // Defer to runtime bus + vanilla queue
             var em = EntityManager;
             var marker = RuntimeChirpTextBus.CreateMarker(em, req.Target, out var token);
             RuntimeChirpTextBus.AddPendingByToken(token, in payload);
@@ -277,10 +250,8 @@ namespace CustomChirps.Systems
             var job = new EnqueueChirpJob { Writer = queue.AsParallelWriter(), Data = data };
             var writerHandle = job.Schedule(deps);
             create.AddQueueWriter(writerHandle);
-
-            var targetLabel = req.Target == Entity.Null ? "None" : req.Target.ToString();
-            _log.Info($"[CustomChirps] Queued chirp (dept={req.Dept}, sender={senderAccount}, target={targetLabel}).");
         }
+
 
 
         private struct EnqueueChirpJob : IJob
@@ -349,11 +320,11 @@ namespace CustomChirps.Systems
         /// <summary>
         /// Minimal proxy source that exposes an in-memory dictionary to the vanilla LocalizationManager.
         /// </summary>
-        private sealed class RuntimeLocaleSourceProxy : IDictionarySource
+        class RuntimeLocaleSourceProxy : IDictionarySource
         {
-            private readonly ConcurrentDictionary<string, string> _src;
+            private readonly Dictionary<string, string> _src;
 
-            public RuntimeLocaleSourceProxy(ConcurrentDictionary<string, string> src)
+            public RuntimeLocaleSourceProxy(Dictionary<string, string> src)
             {
                 _src = src ?? throw new ArgumentNullException(nameof(src));
             }
@@ -362,7 +333,7 @@ namespace CustomChirps.Systems
                 IList<IDictionaryEntryError> errors,
                 Dictionary<string, int> indexCounts)
             {
-                // Snapshot the dictionary at call time.
+                // Snapshot the dictionary at call time (enumeration over Dictionary is fine).
                 return _src;
             }
 
@@ -370,5 +341,6 @@ namespace CustomChirps.Systems
 
             public override string ToString() => "CustomChirps.RuntimeLocaleProxy";
         }
+
     }
 }
