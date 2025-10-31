@@ -7,6 +7,7 @@ using Game.Modding;
 using Game.Prefabs;
 using Game.SceneFlow;
 using Game.Triggers;
+using Game.UI.InGame;
 using HarmonyLib;
 
 using System;
@@ -25,6 +26,8 @@ namespace CustomChirps
         // Provide these later when your assets load:
         public static PrefabBase OtherModChirperAccountPrefab;
         public static PrefabBase ChirpPrefab;
+        public static int VanillaKeepPercent = 0;
+        public static Setting m_Setting;
 
         public void OnLoad(UpdateSystem updateSystem)
         {
@@ -33,10 +36,17 @@ namespace CustomChirps
             if (GameManager.instance.modManager.TryGetExecutableAsset(this, out var asset))
                 log.Info($"Current mod asset at {asset.path}");
 
+            m_Setting = new Setting(this);
+            m_Setting.RegisterInOptionsUI();
+            GameManager.instance.localizationManager.AddSource("en-US", new LocaleEN(m_Setting));
+            AssetDatabase.global.LoadSettings(nameof(CustomChirps), m_Setting, new Setting(this));
+
             // Make our ECS systems run during the game simulation loop
+            // 2) Your spawner stamps ModChirpText (and other markers) on matching chirps
+            updateSystem.UpdateAfter<CustomChirps.Systems.CustomChirpSpawnerSystem,
+                                     Game.Triggers.CreateChirpSystem>(SystemUpdatePhase.GameSimulation);
+
             updateSystem.UpdateAt<Systems.CustomChirpApiSystem>(SystemUpdatePhase.GameSimulation);
-            updateSystem.UpdateAt<Systems.CustomChirpSpawnerSystem>(SystemUpdatePhase.GameSimulation);
-            updateSystem.UpdateAfter<Systems.CustomChirpSpawnerSystem, CreateChirpSystem>(SystemUpdatePhase.GameSimulation);
 
 
             var harmony = new Harmony(harmonyID);
@@ -54,6 +64,11 @@ namespace CustomChirps
         public void OnDispose()
         {
             log.Info(nameof(OnDispose));
+            if (m_Setting != null)
+            {
+                m_Setting.UnregisterInOptionsUI();
+                m_Setting = null;
+            }
         }
     }
 }
