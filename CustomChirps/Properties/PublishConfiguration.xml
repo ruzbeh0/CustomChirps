@@ -8,7 +8,7 @@
 	<!--Long description of the mod. Single line or multi line. Supports minimal markdown subset-->
 	<!--LongDescription Value="This is a long description" /-->
 	<LongDescription>
-This mod offers an API for other mods to send custom chirps. Is also has an option to disable Vanilla Chirps - while still showing chirps from other mods.
+This mod offers an API for other mods to send custom chirps. Is also has an option to disable Vanilla Chirps - while still showing chirps from other mods. The option to disable vanilla mods is not enabled by default.
 
 **Modders**: see the GitHub or Discord link for instructions on how to use the API.
 	</LongDescription>

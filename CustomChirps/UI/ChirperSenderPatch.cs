@@ -2,6 +2,7 @@
 using Colossal.UI.Binding;
 using CustomChirps.Components;
 using CustomChirps.Systems;
+using Game.Common;
 using Game.UI;
 using Game.UI.InGame;
 using Game.UI.Localization;
@@ -70,6 +71,20 @@ namespace CustomChirps.UI
 
             // No override → let vanilla build the title.
             return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(ChirperUISystem), "BindChirpSender")]
+    [HarmonyPriority(Priority.Last)]                 // run after other prefixes
+    // [HarmonyAfter("your.harmony.id.if.you.use.one")]  // optional: ensure ordering vs other mods
+    internal static class BindChirpSender_ClearTags_Prefix
+    {
+        // Note: void Prefix (can't skip original)
+        static void Prefix(ChirperUISystem __instance, Entity entity /* keep any other original args */)
+        {
+            var em = __instance.EntityManager;
+            if (em.HasComponent<Created>(entity)) em.RemoveComponent<Created>(entity);
+            if (em.HasComponent<Updated>(entity)) em.RemoveComponent<Updated>(entity);
         }
     }
 }

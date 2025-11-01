@@ -48,7 +48,7 @@ namespace CustomChirps.UI
                     if (em.HasComponent<Updated>(e))
                         em.RemoveComponent<Updated>(e);
 
-                    Mod.log.Info($"[Chirp/Filtered@Publish] entity={e} key={key}");
+                    //Mod.log.Info($"[Chirp/Filtered@Publish] entity={e} key={key}");
                 }
             }
             finally
