@@ -4,6 +4,7 @@ using Colossal.Localization;
 using Colossal.Logging;
 using CustomChirps.Utils; // I18NBridge + RuntimeLocalizationWindow
 using Game;
+using Game.Citizens;
 using Game.Prefabs;
 using Game.SceneFlow;
 using Game.Triggers;
@@ -90,10 +91,14 @@ namespace CustomChirps.Systems
         }
 
         /// <summary>
-        /// Post a chirp from a specific entity such as a Citizen.
-        /// The sender entity will be used for the icon and will be clickable in the UI.
+        /// Post a chirp from a cim (citizen).
+        /// The cim will be shown as the sender with their icon and will be clickable in the UI.
         /// </summary>
-        public static void PostChirpFromEntity(string text, Entity senderEntity, Entity targetEntity, string customSenderName = null)
+        /// <param name="text">The chirp message text. Use {LINK_1} for target entity link.</param>
+        /// <param name="citizenSenderEntity">A cim entity (must have Game.Citizens.Citizen component).</param>
+        /// <param name="targetEntity">Target entity for {LINK_1} in the message (e.g., a building or park).</param>
+        /// <param name="customSenderName">Optional display name for the sender (e.g., "John Smith").</param>
+        public static void PostChirpFromEntity(string text, Entity citizenSenderEntity, Entity targetEntity, string customSenderName = null)
         {
             s_requests.Enqueue(new PendingRequest
             {
@@ -101,7 +106,7 @@ namespace CustomChirps.Systems
                 Dept = default,
                 Target = targetEntity,
                 CustomSenderName = customSenderName,
-                SenderEntityOverride = senderEntity
+                SenderEntityOverride = citizenSenderEntity
             });
         }
 
@@ -213,9 +218,19 @@ namespace CustomChirps.Systems
             // Resolve sender: use override entity if provided, otherwise resolve from department
             Entity senderAccount;
             if (req.SenderEntityOverride != Entity.Null)
+            {
+                // Validate sender is a cim (has Citizen component)
+                if (!EntityManager.HasComponent<Citizen>(req.SenderEntityOverride))
+                {
+                    _log.Warn("[CustomChirps] PostChirpFromEntity requires a cim (entity with Game.Citizens.Citizen component) as sender");
+                    return;
+                }
                 senderAccount = req.SenderEntityOverride;
+            }
             else
+            {
                 senderAccount = ResolveDepartment(req.Dept);
+            }
 
             if (senderAccount == Entity.Null || _chirpPrefabEntity == Entity.Null)
                 return;
