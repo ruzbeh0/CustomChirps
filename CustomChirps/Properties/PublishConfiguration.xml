@@ -4,7 +4,7 @@
 	<!--Name of the mod to display to players-->
 	<DisplayName Value="Custom Chirps" />
 	<!--Short description of the mod-->
-	<ShortDescription Value="This mod allows other mods to send custom chirps" />
+	<ShortDescription Value="This mod allows other mods to send custom chirps. It also has an option to disable Vanilla Chirps." />
 	<!--Long description of the mod. Single line or multi line. Supports minimal markdown subset-->
 	<!--LongDescription Value="This is a long description" /-->
 	<LongDescription>
@@ -21,21 +21,21 @@ This mod offers an API for other mods to send custom chirps. Is also has an opti
 	<!--Link to the forum post where the mod can be discussed-->
 	<ForumLink Value="https://forum.paradoxplaza.com/forum/threads/custom-chirps-mod.1865705/" />
 	<!--Version of the mod-->
-	<ModVersion Value="0.3" />
+	<ModVersion Value="0.4" />
 	<!--Recommended version of the base game to use the mod-->
-	<GameVersion Value="1.3.*" />
+	<GameVersion Value="1.5.*" />
 	<!--Dependency for the mod, can be set multiple times-->
 	<Dependency Id="" />
 	<!--Required DLC, can be set multiple times. Supported values are "Landmark Buildings", "San Fransisco Set", "Beach Properties", "Urban Promenades", "Modern Architecture"-->
 	<RequiredDLC Value="" />
 	<!--Change log for new version. Single line or multi line. Supports minimal markdown subset-->
 	<ChangeLog>
-* Added option to disable vanilla chirps
+* Added API method to allow custom chirps sent by a cim
 	</ChangeLog>
 	<!--<ChangeLog>
 	</ChangeLog>-->
 	<!--External link, can be set multiple times. supported types are "discord", "github", "youtube", "twitch", "x", "paypal", "patreon", "buymeacoffee", "kofi", "crowdin", "gitlab", "gofundme"-->
-	<ExternalLink Type="github" Url="https://github.com/ruzbeh0/Time2Work" />
+	<ExternalLink Type="github" Url="https://github.com/ruzbeh0/CustomChirps" />
 	<ExternalLink Type="discord" Url="https://discord.com/channels/1024242828114673724/1425951622844125275" />
 	<ExternalLink Type="paypal" Url="https://www.paypal.com/paypalme/ruzbeh0" />
 	<ExternalLink Type="kofi" Url="https://ko-fi.com/ruzbeh0" />
