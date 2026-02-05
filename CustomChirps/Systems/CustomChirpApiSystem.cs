@@ -56,6 +56,7 @@ namespace CustomChirps.Systems
             public DepartmentAccount Dept;
             public Entity Target;
             public string CustomSenderName;
+            public Entity SenderEntityOverride;
         }
 
         private static readonly ConcurrentQueue<PendingRequest> s_requests = new ConcurrentQueue<PendingRequest>();
@@ -85,6 +86,22 @@ namespace CustomChirps.Systems
                 Dept = dept,
                 Target = targetEntity,
                 CustomSenderName = customSenderName
+            });
+        }
+
+        /// <summary>
+        /// Post a chirp from a specific entity such as a Citizen.
+        /// The sender entity will be used for the icon and will be clickable in the UI.
+        /// </summary>
+        public static void PostChirpFromEntity(string text, Entity senderEntity, Entity targetEntity, string customSenderName = null)
+        {
+            s_requests.Enqueue(new PendingRequest
+            {
+                Text = text,
+                Dept = default,
+                Target = targetEntity,
+                CustomSenderName = customSenderName,
+                SenderEntityOverride = senderEntity
             });
         }
 
@@ -193,8 +210,13 @@ namespace CustomChirps.Systems
         // ======= Main-thread processing =======
         private void ProcessRequestOnMainThread(in PendingRequest req)
         {
-            // Resolve sender/target exactly as you already do (keep your existing code here)
-            var senderAccount = ResolveDepartment(req.Dept);
+            // Resolve sender: use override entity if provided, otherwise resolve from department
+            Entity senderAccount;
+            if (req.SenderEntityOverride != Entity.Null)
+                senderAccount = req.SenderEntityOverride;
+            else
+                senderAccount = ResolveDepartment(req.Dept);
+
             if (senderAccount == Entity.Null || _chirpPrefabEntity == Entity.Null)
                 return;
 
