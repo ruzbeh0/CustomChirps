@@ -19,16 +19,20 @@ namespace CustomChirps
 
         public Setting(IMod mod) : base(mod)
         {
-            if (!disable_vanilla_chirps) SetDefaults();
+            SetDefaults();
         }
 
         public override void SetDefaults()
         {
             disable_vanilla_chirps = false;
+            hide_vanilla_chirps_in_chirper_panel = false;
         }
 
         [SettingsUISection(SettingsSection, SettingsGroup)]
         public bool disable_vanilla_chirps { get; set; }
+
+        [SettingsUISection(SettingsSection, SettingsGroup)]
+        public bool hide_vanilla_chirps_in_chirper_panel { get; set; }
 
     }
 
@@ -49,7 +53,10 @@ namespace CustomChirps
 
                 // Debug
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.disable_vanilla_chirps)), "Disable Vanilla Chirps" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.disable_vanilla_chirps)),  "Disables vanillas chirps. Chirps from other mods will still be shown" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.disable_vanilla_chirps)),  "Disables vanilla chirp pop-ups. Chirps from other mods will still be shown" },
+
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.hide_vanilla_chirps_in_chirper_panel)), "Hide Vanilla Chirps In Chirper Panel" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.hide_vanilla_chirps_in_chirper_panel)),  "Shows only custom chirps when opening the chirper panel" },
 
 
             };
