@@ -21,7 +21,7 @@ This mod offers an API for other mods to send custom chirps. Is also has an opti
 	<!--Link to the forum post where the mod can be discussed-->
 	<ForumLink Value="https://forum.paradoxplaza.com/forum/threads/custom-chirps-mod.1865705/" />
 	<!--Version of the mod-->
-	<ModVersion Value="0.4" />
+	<ModVersion Value="0.4.1" />
 	<!--Recommended version of the base game to use the mod-->
 	<GameVersion Value="1.5.*" />
 	<!--Dependency for the mod, can be set multiple times-->
@@ -30,7 +30,7 @@ This mod offers an API for other mods to send custom chirps. Is also has an opti
 	<RequiredDLC Value="" />
 	<!--Change log for new version. Single line or multi line. Supports minimal markdown subset-->
 	<ChangeLog>
-* Added API method to allow custom chirps sent by a cim
+* Fixed shuttering bug
 	</ChangeLog>
 	<!--<ChangeLog>
 	</ChangeLog>-->
