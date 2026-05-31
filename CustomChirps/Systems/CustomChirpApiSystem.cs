@@ -36,6 +36,12 @@ namespace CustomChirps.Systems
         Education
     }
 
+    public enum ChirpDisplayMode
+    {
+        Compact = 0,
+        Large = 1
+    }
+
     /// <summary>
     /// Thread-safe chirp API.
     /// Runtime chirp text is resolved by RuntimeChirpLocalizationPatch without reloading the active locale.
@@ -51,8 +57,11 @@ namespace CustomChirps.Systems
             public string Text;
             public DepartmentAccount Dept;
             public Entity Target;
+            public Entity Target2;
             public string CustomSenderName;
             public Entity SenderEntityOverride;
+            public ChirpDisplayMode DisplayMode;
+            public string PortraitImageSource;
         }
 
         private static readonly ConcurrentQueue<PendingRequest> s_requests = new ConcurrentQueue<PendingRequest>();
@@ -65,13 +74,22 @@ namespace CustomChirps.Systems
         // ======= Public API (thread-safe) =======
         public static void PostChirp(string text, DepartmentAccount dept, Entity targetEntity, string customSenderName = null)
         {
-            s_requests.Enqueue(new PendingRequest
-            {
-                Text = text,
-                Dept = dept,
-                Target = targetEntity,
-                CustomSenderName = customSenderName
-            });
+            EnqueueChirp(text, dept, targetEntity, customSenderName, Entity.Null, ChirpDisplayMode.Compact);
+        }
+
+        public static void PostLargeChirp(string text, DepartmentAccount dept, Entity targetEntity, string customSenderName = null)
+        {
+            EnqueueChirp(text, dept, targetEntity, customSenderName, Entity.Null, ChirpDisplayMode.Large);
+        }
+
+        public static void PostLargeChirpWithPortraitImage(
+            string text,
+            DepartmentAccount dept,
+            Entity targetEntity,
+            string portraitImageSource,
+            string customSenderName = null)
+        {
+            EnqueueChirp(text, dept, targetEntity, customSenderName, Entity.Null, ChirpDisplayMode.Large, portraitImageSource);
         }
 
         /// <summary>
@@ -84,13 +102,55 @@ namespace CustomChirps.Systems
         /// <param name="customSenderName">Optional display name for the sender (e.g., "John Smith").</param>
         public static void PostChirpFromEntity(string text, Entity citizenSenderEntity, Entity targetEntity, string customSenderName = null)
         {
+            EnqueueChirp(text, default, targetEntity, customSenderName, citizenSenderEntity, ChirpDisplayMode.Compact);
+        }
+
+        public static void PostLargeChirpFromEntity(string text, Entity citizenSenderEntity, Entity targetEntity, string customSenderName = null)
+        {
+            EnqueueChirp(text, default, targetEntity, customSenderName, citizenSenderEntity, ChirpDisplayMode.Large);
+        }
+
+        public static void PostLargeChirpFromEntityWithPortraitImage(
+            string text,
+            Entity citizenSenderEntity,
+            Entity targetEntity,
+            string portraitImageSource,
+            string customSenderName = null)
+        {
+            EnqueueChirp(text, default, targetEntity, customSenderName, citizenSenderEntity, ChirpDisplayMode.Large, portraitImageSource);
+        }
+
+        public static void PostLargeChirpFromEntityWithPortraitImage(
+            string text,
+            Entity citizenSenderEntity,
+            Entity targetEntity,
+            Entity targetEntity2,
+            string portraitImageSource,
+            string customSenderName = null)
+        {
+            EnqueueChirp(text, default, targetEntity, customSenderName, citizenSenderEntity, ChirpDisplayMode.Large, portraitImageSource, targetEntity2);
+        }
+
+        private static void EnqueueChirp(
+            string text,
+            DepartmentAccount dept,
+            Entity targetEntity,
+            string customSenderName,
+            Entity senderEntityOverride,
+            ChirpDisplayMode displayMode,
+            string portraitImageSource = null,
+            Entity targetEntity2 = default)
+        {
             s_requests.Enqueue(new PendingRequest
             {
                 Text = text,
-                Dept = default,
+                Dept = dept,
                 Target = targetEntity,
+                Target2 = targetEntity2,
                 CustomSenderName = customSenderName,
-                SenderEntityOverride = citizenSenderEntity
+                SenderEntityOverride = senderEntityOverride,
+                DisplayMode = displayMode,
+                PortraitImageSource = portraitImageSource
             });
         }
 
@@ -173,11 +233,21 @@ namespace CustomChirps.Systems
 
             // Compose final text (keep your existing formatting; below is the same minimal link insert)
             string finalText = req.Text ?? string.Empty;
-            if (req.Target != Entity.Null && finalText.IndexOf("{LINK_", StringComparison.Ordinal) < 0)
+            if ((req.Target != Entity.Null || req.Target2 != Entity.Null) && finalText.IndexOf("{LINK_", StringComparison.Ordinal) < 0)
                 finalText += " {LINK_1}";
 
             // 1) Collision-resistant key
-            var key = $"customchirps:{Guid.NewGuid():N}";
+            var portraitImageSource = req.PortraitImageSource;
+            var hasPortraitImage = req.DisplayMode == ChirpDisplayMode.Large && !string.IsNullOrWhiteSpace(portraitImageSource);
+            var imageKey = hasPortraitImage
+                ? CustomChirpImageSourceRegistry.Register(portraitImageSource)
+                : null;
+            var keyPrefix = hasPortraitImage
+                ? $"customchirps:portraitimg:{imageKey}:"
+                : req.DisplayMode == ChirpDisplayMode.Large
+                    ? "customchirps:large:"
+                    : "customchirps:";
+            var key = $"{keyPrefix}{Guid.NewGuid():N}";
             var value = string.IsNullOrWhiteSpace(finalText) ? "(empty)" : finalText;
 
             // 2) Register text locally. The UI localization lookup patch resolves these keys directly,
@@ -190,11 +260,13 @@ namespace CustomChirps.Systems
                 Key = new Unity.Collections.FixedString512Bytes(key),
                 Sender = senderAccount,
                 Target = req.Target,
-                OverrideSenderName = new Unity.Collections.FixedString128Bytes(req.CustomSenderName ?? "")
+                Target2 = req.Target2,
+                OverrideSenderName = new Unity.Collections.FixedString128Bytes(req.CustomSenderName ?? ""),
+                DisplayMode = req.DisplayMode
             };
 
             var em = EntityManager;
-            var marker = RuntimeChirpTextBus.CreateMarker(em, req.Target, out var token);
+            var marker = RuntimeChirpTextBus.CreateMarker(em, req.Target, req.Target2, out var token);
             RuntimeChirpTextBus.AddPendingByToken(token, in payload);
 
             var data = new ChirpCreationData
@@ -210,6 +282,7 @@ namespace CustomChirps.Systems
             var writerHandle = job.Schedule(deps);
             create.AddQueueWriter(writerHandle);
         }
+
         private struct EnqueueChirpJob : IJob
         {
             public NativeQueue<ChirpCreationData>.ParallelWriter Writer;

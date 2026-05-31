@@ -1,0 +1,93 @@
+.customchirps-large-chirp-shell {
+    min-height: 220rem;
+}
+
+.customchirps-large-chirp-shell[data-customchirps-image="true"] {
+    min-height: 220rem;
+}
+
+.customchirps-large-chirp-portrait-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    width: 100%;
+    margin: 5rem 0 3rem 0;
+}
+
+.customchirps-large-chirp-portrait-image {
+    display: block;
+    flex: 0 0 84rem;
+    width: 84rem;
+    height: 84rem;
+    margin: 0 12rem 0 0;
+    object-fit: cover;
+    background-color: rgba(75, 195, 241, 0.08);
+    border-radius: 5rem;
+}
+
+.customchirps-large-chirp-portrait-image[data-customchirps-load-error="true"] {
+    background-color: rgba(224, 86, 86, 0.14);
+}
+
+.customchirps-large-chirp {
+    box-sizing: border-box;
+    min-height: 210rem;
+    padding: 18rem 18rem 14rem 18rem;
+}
+
+.customchirps-large-chirp-shell[data-customchirps-image="true"] .customchirps-large-chirp {
+    min-height: 210rem;
+    padding-top: 18rem;
+}
+
+.customchirps-large-chirp-shell[data-customchirps-layout="portrait"] {
+    min-height: 151rem;
+}
+
+.customchirps-large-chirp-shell[data-customchirps-layout="portrait"] .customchirps-large-chirp {
+    min-height: 143rem;
+    padding: 13rem 18rem 10rem 18rem;
+}
+
+.customchirps-large-chirp [class^="content_"],
+.customchirps-large-chirp [class*=" content_"] {
+    display: flex;
+    flex-direction: column;
+}
+
+.customchirps-large-chirp [class^="sender_"],
+.customchirps-large-chirp [class*=" sender_"] {
+    font-size: var(--fontSizeXL);
+}
+
+.customchirps-large-chirp [class^="message_"],
+.customchirps-large-chirp [class*=" message_"] {
+    flex: 0 1 auto;
+    font-size: var(--fontSizeL);
+    line-height: 1.45;
+    padding-top: 8rem;
+}
+
+.customchirps-large-chirp-portrait-row [class^="message_"],
+.customchirps-large-chirp-portrait-row [class*=" message_"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-top: 0;
+}
+
+.customchirps-large-chirp-shell[data-customchirps-layout="portrait"] .customchirps-large-chirp [class^="sender_"],
+.customchirps-large-chirp-shell[data-customchirps-layout="portrait"] .customchirps-large-chirp [class*=" sender_"],
+.customchirps-large-chirp-shell[data-customchirps-layout="portrait"] .customchirps-large-chirp [class^="message_"],
+.customchirps-large-chirp-shell[data-customchirps-layout="portrait"] .customchirps-large-chirp [class*=" message_"] {
+    font-size: var(--fontSizeM);
+}
+
+.customchirps-large-chirp-shell[data-customchirps-layout="portrait"] .customchirps-large-chirp [class^="message_"],
+.customchirps-large-chirp-shell[data-customchirps-layout="portrait"] .customchirps-large-chirp [class*=" message_"] {
+    line-height: 1.35;
+}
+
+.customchirps-large-chirp [class^="footer_"],
+.customchirps-large-chirp [class*=" footer_"] {
+    margin-top: 1em;
+}

@@ -47,6 +47,7 @@ namespace CustomChirps
                                      Game.Triggers.CreateChirpSystem>(SystemUpdatePhase.GameSimulation);
 
             updateSystem.UpdateAt<Systems.CustomChirpApiSystem>(SystemUpdatePhase.GameSimulation);
+            updateSystem.UpdateAt<CustomChirps.Systems.CustomChirpImageSourceUISystem>(SystemUpdatePhase.UIUpdate);
 
 
             var harmony = new Harmony(harmonyID);
@@ -69,6 +70,7 @@ namespace CustomChirps
                 m_Setting.UnregisterInOptionsUI();
                 m_Setting = null;
             }
+            Systems.CustomChirpImageSourceRegistry.Clear();
         }
     }
 }

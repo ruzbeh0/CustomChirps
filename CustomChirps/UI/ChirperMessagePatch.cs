@@ -35,14 +35,12 @@ namespace CustomChirps.UI
                     }
                 }
 
-                // Ensure the final target is linked
-                if (payload.Target != Entity.Null && em.HasBuffer<Game.Triggers.ChirpEntity>(chirp))
+                // Ensure final targets are linked
+                if (em.HasBuffer<Game.Triggers.ChirpEntity>(chirp))
                 {
                     var links = em.GetBuffer<Game.Triggers.ChirpEntity>(chirp);
-                    bool alreadyLinked = false;
-                    for (int i = 0; i < links.Length; i++)
-                        if (links[i].m_Entity == payload.Target) { alreadyLinked = true; break; }
-                    if (!alreadyLinked) links.Add(new Game.Triggers.ChirpEntity(payload.Target));
+                    AddUniqueLink(links, payload.Target);
+                    AddUniqueLink(links, payload.Target2);
                 }
 
                 // >>> IMPORTANT: stash payload for the sender patch + stamp component
@@ -83,6 +81,20 @@ namespace CustomChirps.UI
                 if (!string.IsNullOrEmpty(key))
                     __result = key;
             }
+        }
+
+        private static void AddUniqueLink(DynamicBuffer<Game.Triggers.ChirpEntity> links, Entity target)
+        {
+            if (target == Entity.Null)
+                return;
+
+            for (int i = 0; i < links.Length; i++)
+            {
+                if (links[i].m_Entity == target)
+                    return;
+            }
+
+            links.Add(new Game.Triggers.ChirpEntity(target));
         }
     }
 }

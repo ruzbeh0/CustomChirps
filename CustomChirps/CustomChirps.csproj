@@ -81,4 +81,12 @@
 	  <PackageReference Include="Lib.Harmony" Version="2.2.2" />
 	</ItemGroup>
 
+	<Target Name="DeployCustomChirpsUI" AfterTargets="DeployWIP">
+		<ItemGroup>
+			<CustomChirpsUIFiles Include="$(ProjectDir)CustomChirpsUI\CustomChirps.mjs" />
+			<CustomChirpsUIFiles Include="$(ProjectDir)CustomChirpsUI\CustomChirps.css" />
+		</ItemGroup>
+		<Copy SourceFiles="@(CustomChirpsUIFiles)" DestinationFiles="@(CustomChirpsUIFiles->'$(DeployDir)\%(Filename)%(Extension)')" />
+	</Target>
+
 </Project>

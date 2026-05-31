@@ -10,6 +10,7 @@ namespace CustomChirps.Components
     {
         public ulong Token;        // unique id to look up the payload
         public Entity FinalTarget; // the real building/entity we want linked in the chirp
+        public Entity FinalTarget2;
     }
 }
 
@@ -20,7 +21,9 @@ namespace CustomChirps.Systems
         public FixedString512Bytes Key;                 // custom text
         public Entity Sender;                           // desired account/icon
         public Entity Target;                           // optional real building to link
+        public Entity Target2;                          // optional second entity for {LINK_2}
         public FixedString128Bytes OverrideSenderName;  // custom sender label for UI
+        public ChirpDisplayMode DisplayMode;            // compact by default; large is opt-in
     }
 
     internal struct PendingItem
@@ -52,13 +55,19 @@ namespace CustomChirps.Systems
         // -------- Token/marker helpers --------
         public static Entity CreateMarker(EntityManager em, Entity finalTarget, out ulong token)
         {
+            return CreateMarker(em, finalTarget, Entity.Null, out token);
+        }
+
+        public static Entity CreateMarker(EntityManager em, Entity finalTarget, Entity finalTarget2, out ulong token)
+        {
             lock (_lock) { token = _nextToken++; }
 
             var e = em.CreateEntity(typeof(CustomChirps.Components.CustomChirpMarker));
             em.SetComponentData(e, new CustomChirps.Components.CustomChirpMarker
             {
                 Token = token,
-                FinalTarget = finalTarget
+                FinalTarget = finalTarget,
+                FinalTarget2 = finalTarget2
             });
             return e;
         }
@@ -75,7 +84,7 @@ namespace CustomChirps.Systems
             if (!em.HasBuffer<Game.Triggers.ChirpEntity>(chirp))
                 return false;
 
-            var links = em.GetBuffer<Game.Triggers.ChirpEntity>(chirp, true);
+            var links = em.GetBuffer<Game.Triggers.ChirpEntity>(chirp);
             for (int i = 0; i < links.Length; i++)
             {
                 var cand = links[i].m_Entity;
@@ -89,11 +98,17 @@ namespace CustomChirps.Systems
                     lock (_lock) { found = _byToken.Remove(marker.Token, out payload); }
                     if (!found) return false;
 
-                    // Replace marker with real target (if any)
+                    // Replace marker with real target(s), preserving link order for {LINK_1}, {LINK_2}, ...
                     if (marker.FinalTarget != Entity.Null)
                         links[i] = new Game.Triggers.ChirpEntity(marker.FinalTarget);
                     else
+                    {
                         links.RemoveAt(i);
+                        i--;
+                    }
+
+                    if (marker.FinalTarget2 != Entity.Null)
+                        AddUniqueLink(links, marker.FinalTarget2);
 
                     em.DestroyEntity(cand);
                     return true;
@@ -238,6 +253,20 @@ namespace CustomChirps.Systems
                 _nextTicket = 0;
                 _nextToken = 1;
             }
+        }
+
+        private static void AddUniqueLink(DynamicBuffer<Game.Triggers.ChirpEntity> links, Entity target)
+        {
+            if (target == Entity.Null)
+                return;
+
+            for (int i = 0; i < links.Length; i++)
+            {
+                if (links[i].m_Entity == target)
+                    return;
+            }
+
+            links.Add(new Game.Triggers.ChirpEntity(target));
         }
     }
 }
