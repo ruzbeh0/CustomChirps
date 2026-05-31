@@ -21,7 +21,6 @@ Create a `CustomChirpsBridge.cs` in your project.
 
 See an example [here](https://github.com/ruzbeh0/Time2Work/blob/master/NightShift/Bridge/CustomChirpsBridge.cs)
 
-
 ---
 
 ### 2. Post a chirp (entity target)
@@ -67,6 +66,77 @@ public static class Example
 
 ---
 
+### 3. Post a large chirp with a portrait image
+
+Use one of the image-enabled API methods below.
+
+```csharp
+public static void PostLargeChirpWithPortraitImage(
+    string text,
+    DepartmentAccountBridge dept,
+    Entity entity,
+    string portraitImageSource,
+    string customSenderName = null);
+
+public static void PostLargeChirpFromEntityWithPortraitImage(
+    string text,
+    Entity citizenSenderEntity,
+    Entity entity,
+    string portraitImageSource,
+    string customSenderName = null);
+
+public static void PostLargeChirpFromEntityWithPortraitImage(
+    string text,
+    Entity citizenSenderEntity,
+    Entity entity,
+    Entity targetEntity2,
+    string portraitImageSource,
+    string customSenderName = null);
+```
+
+```csharp
+if (!CustomChirpsBridge.IsAvailable) return;
+
+string imageSource = "coui://ui-mods/SmartTransportation/Images/BusDelay.png";
+string text = "Important route update from SmartTransportation.";
+
+// Department-based sender
+CustomChirpsBridge.PostLargeChirpWithPortraitImage(
+    text: text,
+    department: DepartmentAccountBridge.Transportation,
+    entity: busiestStop,
+    portraitImageSource: imageSource,
+    customSenderName: T2WStrings.T("chirp.mod_name")
+);
+
+// Citizen sender (entity)
+CustomChirpsBridge.PostLargeChirpFromEntityWithPortraitImage(
+    text: text,
+    citizenSenderEntity: cim,
+    entity: busiestStop,
+    portraitImageSource: "https://example.com/icons/traffic.png",
+    customSenderName: "Transit Supervisor"
+);
+
+// Citizen sender + secondary target link
+CustomChirpsBridge.PostLargeChirpFromEntityWithPortraitImage(
+    text: text,
+    citizenSenderEntity: cim,
+    entity: busiestStop,
+    targetEntity2: districtOffice,
+    portraitImageSource: "Portraits/Bus/driver.png",
+    customSenderName: "Transit Supervisor"
+);
+```
+
+Image notes:
+
+* These image overloads create **large chirps** (`customchirps:portraitimg:`). For compact chirps use the non-image `PostChirp` methods.
+* `portraitImageSource` supports normal image URLs, `Media/...` assets, `data:` URIs, or relative paths used by the game UI (which are resolved automatically).
+* If there is no `{LINK_1}` in the text and an entity target is provided, the bridge auto-appends `{LINK_1}` like standard posts.
+
+---
+
 ## Department icons
 
 Pick a department to control the **message icon**.
@@ -102,7 +172,7 @@ In the bridge, these appear as the enum `DepartmentAccountBridge` (same names).
 
 ---
 
-Here’s the same idea, laid out step-by-step so other modders can follow the pattern quickly.
+Here's the same idea, laid out step-by-step so other modders can follow the pattern quickly.
 
 ---
 
@@ -201,7 +271,7 @@ CustomChirpsBridge.PostChirp(
 
 ### 3) Keep your keys in your own dictionary (any format you like)
 
-Here’s the minimal set used above:
+Here's the minimal set used above:
 
 ```text
 { "chirp.mod_name",   "SmartTransportation Mod" }
